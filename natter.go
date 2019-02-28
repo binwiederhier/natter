@@ -8,28 +8,23 @@ import (
 	"strings"
 )
 
-type ChatRequest struct {
-	Action   string
-	Username string
-	Message  string
-}
-
 func main() {
-	server := flag.Bool("server", false, "Server mode")
-	hub := flag.String("hub", "", "Hub server")
+	serverFlag := flag.Bool("server", false, "Server mode")
+	hubFlag := flag.String("hub", "", "Hub server")
 
 	flag.Parse()
 
-	if *server {
+	if *serverFlag {
 		if flag.NArg() < 1 {
 			syntax()
 		}
 
 		listenAddr := flag.Arg(0)
-		println(listenAddr)
-		startServer(listenAddr)
+
+		server := &server{}
+		server.start(listenAddr)
 	} else {
-		if flag.NArg() < 1 || *hub == "" {
+		if flag.NArg() < 1 || *hubFlag == "" {
 			syntax()
 		}
 
@@ -38,8 +33,8 @@ func main() {
 			syntax()
 		}
 
-		localUser := spec[0]
-		localPort, err := strconv.Atoi(spec[1])
+		source := spec[0]
+		sourcePort, err := strconv.Atoi(spec[1])
 		if err != nil {
 			syntax()
 		}
@@ -50,7 +45,8 @@ func main() {
 			syntax()
 		}
 
-		startClient(*hub, localUser, localPort, target, targetPort)
+		client := &client{}
+		client.start(*hubFlag, source, sourcePort, target, targetPort)
 	}
 }
 

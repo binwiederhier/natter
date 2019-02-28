@@ -1,0 +1,28 @@
+syntax = "proto3";
+package main;
+
+// 0x01
+message RegisterRequest {
+    string source = 1;
+}
+
+// 0x02
+message RegisterResponse {
+    string addr = 1;
+}
+
+// 0x03
+message GetRequest {
+    string source = 1;
+    string target = 2;
+}
+
+// 0x04
+message GetResponse {
+    string target_addr = 1;
+}
+
+// 0x05
+message ChatMessage {
+    string message = 1;
+}

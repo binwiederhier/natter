@@ -1,59 +1,52 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/golang/protobuf/proto"
 	"log"
 	"math/rand"
 	"net"
 	"time"
 )
 
+type client struct {
+	sourceUdpServerAddr *net.UDPAddr
+	sourceUdpConnection *net.UDPConn
+}
 
-func startClient(serverAddr string, username string, localPort int, peer string, targetPort int) {
-	rand.Seed(time.Now().Unix())
-
-	localUdpPort := fmt.Sprintf(":%d", 1000 + rand.Intn(1000))
+func (c *client) start(hubAddr string, source string, sourcePort int, target string, targetPort int) {
+	var err error
 	buf := make([]byte, 2048)
 
+	rand.Seed(time.Now().Unix())
+	sourceUdpServerPort := fmt.Sprintf(":%d", 10000 + rand.Intn(10000))
+
 	// Prepare to register user to server.
-	saddr, err := net.ResolveUDPAddr("udp4", serverAddr)
+	c.sourceUdpServerAddr, err = net.ResolveUDPAddr("udp4", hubAddr)
 	if err != nil {
 		log.Print("Resolve server address failed.")
 		log.Fatal(err)
 	}
 
 	// Prepare for local listening.
-	addr, err := net.ResolveUDPAddr("udp4", localUdpPort)
+	addr, err := net.ResolveUDPAddr("udp4", sourceUdpServerPort)
 	if err != nil {
 		log.Print("Resolve local address failed.")
 		log.Fatal(err)
 	}
-	conn, err := net.ListenUDP("udp", addr)
+
+	c.sourceUdpConnection, err = net.ListenUDP("udp", addr)
 	if err != nil {
 		log.Print("Listen UDP failed.")
 		log.Fatal(err)
 	}
 
 	// Send registration information to server.
-	initChatRequest := ChatRequest{
-		"New",
-		username,
-		"",
-	}
-	jsonRequest, err := json.Marshal(initChatRequest)
-	if err != nil {
-		log.Print("Marshal Register information failed.")
-		log.Fatal(err)
-	}
-	fmt.Println("-> ", string(jsonRequest))
-	_, err = conn.WriteToUDP(jsonRequest, saddr)
-	if err != nil {
-		log.Fatal(err)
-	}
+	sendmsg(c.sourceUdpConnection, c.sourceUdpServerAddr, messageTypeRegisterRequest,
+		&RegisterRequest{Source: source})
 
 	log.Print("Waiting for server response...")
-	n, _, err := conn.ReadFromUDP(buf)
+	n, _, err := c.sourceUdpConnection.ReadFromUDP(buf)
 	if err != nil {
 		log.Print("Register to server failed.")
 		log.Fatal(err)
@@ -61,69 +54,64 @@ func startClient(serverAddr string, username string, localPort int, peer string,
 	fmt.Println("<- (unused) ", string(buf[:n]))
 
 	// Send connect request to server
-	connectChatRequest := ChatRequest{
-		"Get",
-		username,
-		peer,
-	}
-	jsonRequest, err = json.Marshal(connectChatRequest)
-	if err != nil {
-		log.Print("Marshal connection information failed.")
-		log.Fatal(err)
-	}
 
-	var serverResponse ChatRequest
+	var response GetResponse
+
 	for i := 0; i < 3; i++ {
-		fmt.Println("-> ", string(jsonRequest))
-		conn.WriteToUDP(jsonRequest, saddr)
-		n, _, err := conn.ReadFromUDP(buf)
+		sendmsg(c.sourceUdpConnection, c.sourceUdpServerAddr, messageTypeGetRequest,
+			&GetRequest{Source: source, Target: target})
+
+		n, _, err := c.sourceUdpConnection.ReadFromUDP(buf)
 		if err != nil {
 			log.Print("Get peer address from server failed.")
 			log.Fatal(err)
 		}
 		fmt.Println("<- ", string(buf[:n]))
-		err = json.Unmarshal(buf[:n], &serverResponse)
-		if err != nil {
-			log.Print("Unmarshal server response failed.")
-			log.Fatal(err)
-		}
-		if serverResponse.Message != "" {
+
+		messageType := messageType(buf[0])
+
+		switch messageType {
+		case messageTypeGetResponse:
+			err = proto.Unmarshal(buf[1:n], &response)
+			if err != nil {
+				panic(err)
+			}
+
 			break
 		}
+
 		time.Sleep(10 * time.Second)
 	}
-	if serverResponse.Message == "" {
+
+	if response.TargetAddr == "" {
 		log.Fatal("Cannot get peer's address")
 	}
-	log.Print("Peer address: ", serverResponse.Message)
-	peerAddr, err := net.ResolveUDPAddr("udp4", serverResponse.Message)
+
+	log.Print("Peer address: ", response.TargetAddr)
+	peerAddr, err := net.ResolveUDPAddr("udp4", response.TargetAddr)
 	if err != nil {
 		log.Print("Resolve peer address failed.")
 		log.Fatal(err)
 	}
 
 	// Start chatting.
-	go listen(conn)
+	go c.listen(c.sourceUdpConnection)
 	for {
 		fmt.Print("Input message: ")
 		message := make([]byte, 2048)
-		fmt.Scanln(&message)
-		messageRequest := ChatRequest{
-			"Chat",
-			username,
-			string(message),
+		n, err := fmt.Scanln(&message)
+		msgstr := ""
+
+		if n > 0 && err == nil {
+			msgstr = string(message)
 		}
-		jsonRequest, err = json.Marshal(messageRequest)
-		if err != nil {
-			log.Print("Error: ", err)
-			continue
-		}
-		fmt.Println("-> ", string(jsonRequest))
-		conn.WriteToUDP(jsonRequest, peerAddr)
+
+		sendmsg(c.sourceUdpConnection, peerAddr, messageTypeChatMessage,
+			&ChatMessage{Message: msgstr})
 	}
 }
 
-func listen(conn *net.UDPConn) {
+func (c *client) listen(conn *net.UDPConn) {
 	for {
 		buf := make([]byte, 2048)
 		n, _, err := conn.ReadFromUDP(buf)
@@ -133,12 +121,18 @@ func listen(conn *net.UDPConn) {
 		}
 		// log.Print("Message from ", addr.IP)
 		fmt.Println("<- ", string(buf[:n]))
-		var message ChatRequest
-		err = json.Unmarshal(buf[:n], &message)
-		if err != nil {
-			log.Print(err)
-			continue
+
+		messageType := messageType(buf[0])
+
+		switch messageType {
+		case messageTypeChatMessage:
+			var msg ChatMessage
+			err = proto.Unmarshal(buf[1:n], &msg)
+			if err != nil {
+				panic(err)
+			}
+
+			fmt.Println(msg.Message)
 		}
-		fmt.Println(message.Username, ":", message.Message)
 	}
 }

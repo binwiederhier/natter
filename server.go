@@ -1,17 +1,18 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/golang/protobuf/proto"
 	"log"
 	"net"
 )
 
-var userIP map[string]string
+type server struct {
+	userIP map[string]string
+}
 
-
-func startServer(listenAddr string) {
-	userIP = map[string]string{}
+func (s *server) start(listenAddr string) {
+	s.userIP = map[string]string{}
 	udpAddr, err := net.ResolveUDPAddr("udp4", listenAddr)
 	if err != nil {
 		log.Fatal(err)
@@ -23,19 +24,11 @@ func startServer(listenAddr string) {
 	}
 
 	for {
-		handleClient(conn)
+		s.handleClient(conn)
 	}
 }
 
-/*
-   Action:
-           New -- Add a new user
-           Get -- Get a user IP address
-   Username:
-           New -- New user's name
-           Get -- The requested user name
-*/
-func handleClient(conn *net.UDPConn) {
+func (s *server) handleClient(conn *net.UDPConn) {
 	var buf [2048]byte
 
 	n, addr, err := conn.ReadFromUDP(buf[0:])
@@ -44,54 +37,44 @@ func handleClient(conn *net.UDPConn) {
 	}
 
 	fmt.Println("<- ", string(buf[:n]))
-	var chatRequest ChatRequest
-	err = json.Unmarshal(buf[:n], &chatRequest)
-	if err != nil {
-		log.Print(err)
-		return
-	}
 
-	switch chatRequest.Action {
-	case "New":
+	messageType := messageType(buf[0])
+
+	switch messageType {
+	case messageTypeRegisterRequest:
+		var request RegisterRequest
+		err = proto.Unmarshal(buf[1:n], &request)
+		if err != nil {
+			log.Print(err)
+			return
+		}
 		remoteAddr := fmt.Sprintf("%s:%d", addr.IP, addr.Port)
-		fmt.Println(remoteAddr, "connecting")
-		userIP[chatRequest.Username] = remoteAddr
+		fmt.Println(request.Source, remoteAddr, "connecting")
+		s.userIP[request.Source] = remoteAddr
+
+		sendmsg(conn, addr, messageTypeRegisterResponse, &RegisterResponse{Addr: remoteAddr})
+	case messageTypeGetRequest:
+		var request GetRequest
+		err = proto.Unmarshal(buf[1:n], &request)
+		if err != nil {
+			log.Print(err)
+			return
+		}
 
 		// Send message back
-		messageRequest := ChatRequest{
-			"Chat",
-			chatRequest.Username,
-			remoteAddr,
-		}
-		jsonRequest, err := json.Marshal(&messageRequest)
-		if err != nil {
-			log.Print(err)
-			break
-		}
-		fmt.Println("-> " + string(jsonRequest))
-		conn.WriteToUDP(jsonRequest, addr)
-	case "Get":
-		// Send message back
-		peerAddr := ""
-		if _, ok := userIP[chatRequest.Message]; ok {
-			peerAddr = userIP[chatRequest.Message]
+		targetAddr := ""
+		if _, ok := s.userIP[request.Target]; ok {
+			targetAddr = s.userIP[request.Target]
 		}
 
-		messageRequest := ChatRequest{
-			"Chat",
-			chatRequest.Username,
-			peerAddr,
-		}
-		jsonRequest, err := json.Marshal(&messageRequest)
-		if err != nil {
-			log.Print(err)
-			break
-		}
-		fmt.Println("-> " + string(jsonRequest))
-		_, err = conn.WriteToUDP(jsonRequest, addr)
-		if err != nil {
-			log.Print(err)
-		}
+		response := &GetResponse{TargetAddr: targetAddr}
+
+		log.Printf("<- GetRequest %s\n", request.String())
+		log.Printf("<- GetResponse %s\n", response.String())
+
+		sendmsg(conn, addr, messageTypeGetResponse, response)
 	}
-	fmt.Println("User table:", userIP)
+
+	fmt.Println("User table:", s.userIP)
 }
+
