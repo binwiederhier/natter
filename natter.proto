@@ -3,26 +3,48 @@ package main;
 
 // 0x01
 message RegisterRequest {
-    string source = 1;
+    string Source = 1;
 }
 
 // 0x02
 message RegisterResponse {
-    string addr = 1;
+    string Addr = 1;
 }
 
 // 0x03
-message GetRequest {
-    string source = 1;
-    string target = 2;
+message ForwardRequest {
+    string Id = 1;
+    string Source = 2;
+    string SourceAddr = 3;
+    string Target = 4;
+    string TargetAddr = 5;
+    string TargetForwardAddr = 6;
 }
 
 // 0x04
-message GetResponse {
-    string target_addr = 1;
+message ForwardResponse {
+    string Id = 1;
+    bool Success = 2;
+    string Source = 3;
+    string SourceAddr = 4;
+    string Target = 5;
+    string TargetAddr = 6;
 }
 
 // 0x05
-message ChatMessage {
-    string message = 1;
+message KeepaliveRequest {
+    string Id = 1;
+    int32 rand = 2;
+}
+
+// 0x06
+message KeepaliveResponse {
+    string Id = 1;
+    int32 rand = 2;
+}
+
+// 0x07
+message DataMessage {
+    string Id = 1;
+    bytes Data = 2;
 }

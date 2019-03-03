@@ -9,49 +9,90 @@ import (
 )
 
 func main() {
-	serverFlag := flag.Bool("server", false, "Server mode")
-	hubFlag := flag.String("hub", "", "Hub server")
+	serverCommand := flag.NewFlagSet("server", flag.ExitOnError)
+	daemonCommand := flag.NewFlagSet("daemon", flag.ExitOnError)
+	forwardCommand := flag.NewFlagSet("forward", flag.ExitOnError)
 
-	flag.Parse()
+	daemonHub := daemonCommand.String("hub", "", "Hub server")
+	daemonName  := daemonCommand.String("name", "", "Client name")
+	forwardHub := forwardCommand.String("hub", "", "Hub server")
+	forwardName  := forwardCommand.String("name", "", "Client name")
 
-	if *serverFlag {
-		if flag.NArg() < 1 {
+	if len(os.Args) < 2 {
+		syntax()
+	}
+
+	command := os.Args[1]
+
+	switch command {
+	case "daemon":
+		if err := daemonCommand.Parse(os.Args[2:]); err != nil {
 			syntax()
 		}
 
-		listenAddr := flag.Arg(0)
-
-		server := &server{}
-		server.start(listenAddr)
-	} else {
-		if flag.NArg() < 1 || *hubFlag == "" {
+		if *daemonHub == "" || *daemonName == "" {
 			syntax()
 		}
 
-		spec := strings.Split(flag.Arg(0), ":")
+		daemon := &daemon{}
+		daemon.start(*daemonHub, *daemonName)
+	case "forward":
+		if err := forwardCommand.Parse(os.Args[2:]); err != nil {
+			syntax()
+		}
+
+		if forwardCommand.NArg() < 1 || *forwardHub == "" || *forwardName == "" {
+			syntax()
+		}
+
+		spec := strings.Split(forwardCommand.Arg(0), ":")
 		if len(spec) != 4 {
 			syntax()
 		}
 
-		source := spec[0]
-		sourcePort, err := strconv.Atoi(spec[1])
+		sourcePort, err := strconv.Atoi(spec[0])
 		if err != nil {
 			syntax()
 		}
 
-		target := spec[2]
-		targetPort, err := strconv.Atoi(spec[3])
+		target := spec[1]
+		targetForwardHost := spec[2]
+		targetForwardPort, err := strconv.Atoi(spec[3])
 		if err != nil {
 			syntax()
 		}
+		targetForwardAddr := fmt.Sprintf("%s:%d", targetForwardHost, targetForwardPort)
 
-		client := &client{}
-		client.start(*hubFlag, source, sourcePort, target, targetPort)
+		forward := &forward{}
+		forward.start(*forwardHub, *forwardName, sourcePort, target, targetForwardAddr)
+	case "server":
+		if err := serverCommand.Parse(os.Args[2:]); err != nil {
+			syntax()
+		}
+
+		if serverCommand.NArg() < 1 {
+			syntax()
+		}
+
+		listenAddr := serverCommand.Arg(0)
+
+		server := &server{}
+		server.start(listenAddr)
+	default:
+		syntax()
 	}
 }
 
 func syntax() {
-	fmt.Println("Syntax: natter -server :PORT")
-	fmt.Println("        natter -hub HUBHOST LOCALUSER:LOCALPORT:TARGET:TARGETPORT")
+	fmt.Println("Syntax:")
+	fmt.Println()
+	fmt.Println("natter server :PORT")
+	fmt.Println("  Start the rendevous server on PORT for new client connections")
+	fmt.Println()
+	fmt.Println("natter daemon -hub HUBHOST -name LOCALUSER")
+	fmt.Println("  Start client side daemon to listen for incoming forwards")
+	fmt.Println()
+	fmt.Println("natter forward -hub HUBHOST -name LOCALUSER LOCALPORT:TARGET:[TARGETHOST]:TARGETPORT")
+	fmt.Println("  Forwarding TCP traffic from local port LOCALPORT to target machine TARGETPORT")
 	os.Exit(1)
 }

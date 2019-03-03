@@ -2,79 +2,121 @@ package main
 
 import (
 	"fmt"
-	"github.com/golang/protobuf/proto"
 	"log"
+	"math/rand"
 	"net"
 )
 
+type clientconn struct {
+	addr *net.UDPAddr
+	conn *net.UDPConn
+}
+
+type fwd struct {
+	id         string
+	source     string
+	sourceConn *clientconn
+	target     string
+	targetConn *clientconn
+}
+
 type server struct {
-	userIP map[string]string
+	control  map[string]*clientconn
+	forwards map[string]*fwd
+
 }
 
 func (s *server) start(listenAddr string) {
-	s.userIP = map[string]string{}
+	s.control = make(map[string]*clientconn)
+	s.forwards = make(map[string]*fwd)
+
+	log.Println("Resolving listen address", listenAddr)
 	udpAddr, err := net.ResolveUDPAddr("udp4", listenAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	log.Println("Listening on", udpAddr.String())
 	conn, err := net.ListenUDP("udp", udpAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	log.Println("Waiting for connections")
 	for {
 		s.handleClient(conn)
 	}
 }
 
 func (s *server) handleClient(conn *net.UDPConn) {
-	var buf [2048]byte
-
-	n, addr, err := conn.ReadFromUDP(buf[0:])
-	if err != nil {
-		return
-	}
-
-	fmt.Println("<- ", string(buf[:n]))
-
-	messageType := messageType(buf[0])
+	addr, messageType, message := recvmsg(conn)
 
 	switch messageType {
 	case messageTypeRegisterRequest:
-		var request RegisterRequest
-		err = proto.Unmarshal(buf[1:n], &request)
-		if err != nil {
-			log.Print(err)
-			return
-		}
+		request, _ := message.(*RegisterRequest)
 		remoteAddr := fmt.Sprintf("%s:%d", addr.IP, addr.Port)
-		fmt.Println(request.Source, remoteAddr, "connecting")
-		s.userIP[request.Source] = remoteAddr
+
+		log.Println("Client", request.Source, "with address", remoteAddr, "connected")
+
+		s.control[request.Source] = &clientconn{
+			conn: conn,
+			addr: addr,
+		}
+
+		log.Println("Control table:")
+		for client, conn := range s.control {
+			log.Println("-", client, conn.addr)
+		}
 
 		sendmsg(conn, addr, messageTypeRegisterResponse, &RegisterResponse{Addr: remoteAddr})
-	case messageTypeGetRequest:
-		var request GetRequest
-		err = proto.Unmarshal(buf[1:n], &request)
-		if err != nil {
-			log.Print(err)
-			return
+	case messageTypeForwardRequest:
+		request, _ := message.(*ForwardRequest)
+
+		if _, ok := s.control[request.Target]; !ok {
+			sendmsg(conn, addr, messageTypeForwardResponse, &ForwardResponse{Success: false})
+		} else {
+			targetControl := s.control[request.Target]
+
+			id := createRandomString(32)
+			forward := &fwd{
+				id: id,
+				source: request.Source,
+				sourceConn: &clientconn{addr: addr, conn: conn},
+				target: request.Target,
+				targetConn: nil,
+			}
+
+			log.Printf("Adding new connection %s\n", id)
+			s.forwards[id] = forward
+
+			sendmsg(targetControl.conn, targetControl.addr, messageTypeForwardRequest, &ForwardRequest{
+				Id: id,
+				Source: request.Source,
+				SourceAddr: fmt.Sprintf("%s:%d", addr.IP, addr.Port),
+				Target: request.Target,
+				TargetAddr: fmt.Sprintf("%s:%d", targetControl.addr.IP, targetControl.addr.Port),
+				TargetForwardAddr: request.TargetForwardAddr,
+			})
 		}
+	case messageTypeForwardResponse:
+		response, _ := message.(*ForwardResponse)
 
-		// Send message back
-		targetAddr := ""
-		if _, ok := s.userIP[request.Target]; ok {
-			targetAddr = s.userIP[request.Target]
+		if _, ok := s.forwards[response.Id]; !ok {
+			log.Println("cannot forward response")
+		} else {
+			fwd := s.forwards[response.Id]
+			sendmsg(fwd.sourceConn.conn, fwd.sourceConn.addr, messageTypeForwardResponse, response)
 		}
-
-		response := &GetResponse{TargetAddr: targetAddr}
-
-		log.Printf("<- GetRequest %s\n", request.String())
-		log.Printf("<- GetResponse %s\n", response.String())
-
-		sendmsg(conn, addr, messageTypeGetResponse, response)
 	}
-
-	fmt.Println("User table:", s.userIP)
 }
 
+
+const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+func createRandomString(n int) string {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+	}
+	return string(b)
+}
