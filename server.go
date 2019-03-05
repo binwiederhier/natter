@@ -51,16 +51,18 @@ func (s *server) start(listenAddr string) {
 func (s *server) handleClient(conn *net.UDPConn) {
 	addr, messageType, message := recvmsg(conn)
 
+	udpAddr, _ := addr.(*net.UDPAddr)
+
 	switch messageType {
 	case messageTypeRegisterRequest:
 		request, _ := message.(*RegisterRequest)
-		remoteAddr := fmt.Sprintf("%s:%d", addr.IP, addr.Port)
+		remoteAddr := fmt.Sprintf("%s:%d", udpAddr.IP, udpAddr.Port)
 
 		log.Println("Client", request.Source, "with address", remoteAddr, "connected")
 
 		s.control[request.Source] = &clientconn{
 			conn: conn,
-			addr: addr,
+			addr: udpAddr,
 		}
 
 		log.Println("Control table:")
@@ -77,11 +79,11 @@ func (s *server) handleClient(conn *net.UDPConn) {
 		} else {
 			targetControl := s.control[request.Target]
 
-			id := createRandomString(32)
+			id := createRandomString(8)
 			forward := &fwd{
 				id: id,
 				source: request.Source,
-				sourceConn: &clientconn{addr: addr, conn: conn},
+				sourceConn: &clientconn{addr: udpAddr, conn: conn},
 				target: request.Target,
 				targetConn: nil,
 			}
@@ -92,7 +94,7 @@ func (s *server) handleClient(conn *net.UDPConn) {
 			sendmsg(targetControl.conn, targetControl.addr, messageTypeForwardRequest, &ForwardRequest{
 				Id: id,
 				Source: request.Source,
-				SourceAddr: fmt.Sprintf("%s:%d", addr.IP, addr.Port),
+				SourceAddr: fmt.Sprintf("%s:%d", udpAddr.IP, udpAddr.Port),
 				Target: request.Target,
 				TargetAddr: fmt.Sprintf("%s:%d", targetControl.addr.IP, targetControl.addr.Port),
 				TargetForwardAddr: request.TargetForwardAddr,

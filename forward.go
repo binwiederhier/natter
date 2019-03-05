@@ -14,8 +14,10 @@ type forward struct {
 	// TODO FIXME This should be per connection!
 	connectionId     string
 	localTcpListener net.Listener
-	localUdpConn     *net.UDPConn
+	localUdpConn     net.PacketConn
 	peerUdpAddr      *net.UDPAddr
+
+	// TODO FIXME This should be per TCP connection!
 	dataChan         chan DataMessage
 }
 
@@ -31,16 +33,11 @@ func (f *forward) start(hubAddr string, source string, sourcePort int, target st
 	// TODO This only supports one forward and one connection!!!
 
 	f.dataChan = make(chan DataMessage)
-	
+
 	// Listen to local UDP address
 	rand.Seed(time.Now().Unix())
 	localUdpPort := fmt.Sprintf(":%d", 10000+rand.Intn(10000))
-	localUdpAddr, err := net.ResolveUDPAddr("udp4", localUdpPort)
-	if err != nil {
-		panic(err)
-	}
-
-	f.localUdpConn, err = net.ListenUDP("udp", localUdpAddr)
+	f.localUdpConn, err = net.ListenPacket("udp", localUdpPort)
 	if err != nil {
 		panic(err)
 	}

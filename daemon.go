@@ -10,8 +10,7 @@ import (
 
 type daemon struct {
 	hubAddr      *net.UDPAddr
-	localUdpConn *net.UDPConn
-	localUdpAddr *net.UDPAddr
+	localUdpConn net.PacketConn
 
 	// TODO this should be an array
 	connectionId string
@@ -31,12 +30,7 @@ func (d *daemon) start(hubAddr string, source string) {
 	// Listen to local UDP address
 	rand.Seed(time.Now().Unix())
 	localPort := fmt.Sprintf(":%d", 10000+rand.Intn(10000))
-	d.localUdpAddr, err = net.ResolveUDPAddr("udp4", localPort)
-	if err != nil {
-		panic(err)
-	}
-
-	d.localUdpConn, err = net.ListenUDP("udp", d.localUdpAddr)
+	d.localUdpConn, err = net.ListenPacket("udp", localPort)
 	if err != nil {
 		panic(err)
 	}
@@ -51,7 +45,7 @@ func (d *daemon) start(hubAddr string, source string) {
 	}
 }
 
-func (d *daemon) listen(conn *net.UDPConn) {
+func (d *daemon) listen(conn net.PacketConn) {
 	var err error
 
 	for {

@@ -38,7 +38,7 @@ var messageTypes = map[messageType]string {
 	messageTypeDataMessage: "DataMessage",
 }
 
-func sendmsg(conn *net.UDPConn, addr *net.UDPAddr, messageType messageType, message proto.Message) {
+func sendmsg(conn net.PacketConn, addr net.Addr, messageType messageType, message proto.Message) {
 	bytes, err := proto.Marshal(message)
 	if err != nil {
 		panic(err)
@@ -47,12 +47,12 @@ func sendmsg(conn *net.UDPConn, addr *net.UDPAddr, messageType messageType, mess
 	log.Println("-> [" + messageTypes[messageType] + "] " + message.String())
 
 	bytes = append([]byte{byte(messageType)}, bytes...)
-	conn.WriteToUDP(bytes, addr)
+	conn.WriteTo(bytes, addr)
 }
 
-func recvmsg(conn *net.UDPConn) (from *net.UDPAddr, msgType messageType, message proto.Message) {
+func recvmsg(conn net.PacketConn) (from net.Addr, msgType messageType, message proto.Message) {
 	buf := make([]byte, messageReceiveBufferBytes)
-	n, addr, err := conn.ReadFromUDP(buf)
+	n, addr, err := conn.ReadFrom(buf)
 	if n == 0 || err != nil {
 		panic(err)
 	}
