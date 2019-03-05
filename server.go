@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"github.com/lucas-clemente/quic-go"
+	"io"
 	"log"
 	"math/rand"
 	"net"
@@ -30,25 +32,29 @@ func (s *server) start(listenAddr string) {
 	s.control = make(map[string]*clientconn)
 	s.forwards = make(map[string]*fwd)
 
-	log.Println("Resolving listen address", listenAddr)
-	udpAddr, err := net.ResolveUDPAddr("udp4", listenAddr)
+	listener, err := quic.ListenAddr(listenAddr, generateTLSConfig(), nil)
 	if err != nil {
-		log.Fatal(err)
-	}
-
-	log.Println("Listening on", udpAddr.String())
-	conn, err := net.ListenUDP("udp", udpAddr)
-	if err != nil {
-		log.Fatal(err)
+		panic(err)
 	}
 
 	log.Println("Waiting for connections")
 	for {
-		s.handleClient(conn)
+		sess, err := listener.Accept()
+		if err != nil {
+			panic(err)
+		}
+		stream, err := sess.AcceptStream()
+		if err != nil {
+			panic(err)
+		}
+
+		go s.handleClient(sess, stream)
 	}
 }
 
-func (s *server) handleClient(conn *net.UDPConn) {
+func (s *server) handleClient(session *quic.Session, ) {
+
+
 	addr, messageType, message := recvmsg(conn)
 
 	udpAddr, _ := addr.(*net.UDPAddr)
