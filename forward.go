@@ -10,10 +10,13 @@ import (
 
 type forward struct {
 	hubAddr          *net.UDPAddr
+
+	// TODO FIXME This should be per connection!
 	connectionId     string
 	localTcpListener net.Listener
 	localUdpConn     *net.UDPConn
 	peerUdpAddr      *net.UDPAddr
+	dataChan         chan DataMessage
 }
 
 func (f *forward) start(hubAddr string, source string, sourcePort int, target string, targetForwardAddr string) {
@@ -25,6 +28,10 @@ func (f *forward) start(hubAddr string, source string, sourcePort int, target st
 		panic(err)
 	}
 
+	// TODO This only supports one forward and one connection!!!
+
+	f.dataChan = make(chan DataMessage)
+	
 	// Listen to local UDP address
 	rand.Seed(time.Now().Unix())
 	localUdpPort := fmt.Sprintf(":%d", 10000+rand.Intn(10000))
@@ -81,6 +88,9 @@ func (f *forward) listenUdp() {
 				Id: request.Id,
 				Rand: request.Rand,
 			})
+		case messageTypeDataMessage:
+			msg, _ := message.(*DataMessage)
+			f.dataChan <- *msg
 		case messageTypeForwardResponse:
 			response, _ := message.(*ForwardResponse)
 
@@ -111,11 +121,12 @@ func (f *forward) listenTcp() {
 			panic(err)
 		}
 
-		go f.handleTcpRequest(conn)
+		go f.handleTcpOutgoing(conn)
+		go f.handleTcpIncoming(conn)
 	}
 }
 
-func (f *forward) handleTcpRequest(conn net.Conn) {
+func (f *forward) handleTcpOutgoing(conn net.Conn) {
 	for f.peerUdpAddr == nil { // TODO racy
 		log.Println("Cannot forward yet. UDP connection not active yet.")
 		time.Sleep(1 * time.Second)
@@ -137,6 +148,13 @@ func (f *forward) handleTcpRequest(conn net.Conn) {
 	}
 
 	conn.Close()
+}
+
+func (f *forward) handleTcpIncoming(conn net.Conn) {
+	for {
+		msg := <-f.dataChan
+		conn.Write(msg.Data)
+	}
 }
 
 func (f *forward) keepalive() {

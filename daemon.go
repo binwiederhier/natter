@@ -95,6 +95,7 @@ func (d *daemon) listen(conn *net.UDPConn) {
 			})
 
 			go d.keepalive()
+			go d.read()
 		}
 	}
 }
@@ -107,5 +108,22 @@ func (d *daemon) keepalive() {
 		})
 
 		time.Sleep(10 * time.Second)
+	}
+}
+
+func (d *daemon) read() {
+	buf := make([]byte, 500)
+
+	for {
+		n, err := d.forwardConn.Read(buf)
+
+		if err != nil {
+			panic(err)
+		}
+
+		sendmsg(d.localUdpConn, d.peerUdpAddr, messageTypeDataMessage, &DataMessage{
+			Id: d.connectionId,
+			Data: buf[:n],
+		})
 	}
 }
