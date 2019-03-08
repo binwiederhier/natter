@@ -1,7 +1,10 @@
 package main
 
 import (
+	"crypto/tls"
 	"fmt"
+	"github.com/lucas-clemente/quic-go"
+	"io"
 	"log"
 	"math/rand"
 	"net"
@@ -10,6 +13,7 @@ import (
 
 type daemon struct {
 	hubAddr      *net.UDPAddr
+	hubStream    quic.Stream
 	localUdpConn net.PacketConn
 
 	// TODO this should be an array
@@ -35,34 +39,72 @@ func (d *daemon) start(hubAddr string, source string) {
 		panic(err)
 	}
 
-	go d.listen(d.localUdpConn)
+	// Open connection to hub
+	session, err := quic.Dial(d.localUdpConn, d.hubAddr, hubAddr, &tls.Config{InsecureSkipVerify: true},
+		&quic.Config{
+			KeepAlive: true,
+			ConnectionIDLength: 8,
+			Versions: []quic.VersionNumber{quic.VersionGQUIC43},
+	})
 
+	if err != nil {
+		panic(err)
+	}
+
+	d.hubStream, err = session.OpenStream()
+	if err != nil {
+		panic(err)
+	}
+
+	go d.listenHubStream()
+	go func() {
+		for {
+			sendmsg(d.hubStream, messageTypeRegisterRequest, &RegisterRequest{Source: source})
+			time.Sleep(15 * time.Second)
+		}
+	}()
+
+	listener, err := quic.Listen(d.localUdpConn, generateTLSConfig(), &quic.Config{KeepAlive:true})
+	if err != nil {
+		panic(err)
+	}
+
+	log.Println("Waiting for connections")
 	for {
-		sendmsg(d.localUdpConn, d.hubAddr, messageTypeRegisterRequest,
-			&RegisterRequest{Source: source})
+		session, err := listener.Accept()
+		if err != nil {
+			panic(err)
+		}
 
-		time.Sleep(15 * time.Second)
+		go d.handlePeerSession(session)
 	}
 }
 
-func (d *daemon) listen(conn net.PacketConn) {
+func (d *daemon) handlePeerSession(session quic.Session) {
+	for {
+		stream, err := session.AcceptStream()
+		if err != nil {
+			panic(err)
+		}
+
+		go d.handlePeerStream(session, stream)
+	}
+}
+
+func (d *daemon) handlePeerStream(session quic.Session, stream quic.Stream) {
+	go func() { io.Copy(stream, d.forwardConn) }()
+	go func() { io.Copy(d.forwardConn, stream) }()
+}
+
+func (d *daemon) listenHubStream() {
 	var err error
 
 	for {
-		addr, messageType, message := recvmsg(conn)
+		messageType, message := recvmsg2(d.hubStream)
 
 		switch messageType {
 		case messageTypeRegisterResponse:
 			// Nothing
-		case messageTypeKeepaliveRequest:
-			request, _ := message.(*KeepaliveRequest)
-			sendmsg(d.localUdpConn, addr, messageTypeKeepaliveResponse, &KeepaliveResponse{
-				Id: request.Id,
-				Rand: request.Rand,
-			})
-		case messageTypeDataMessage:
-			msg, _ := message.(*DataMessage)
-			d.forwardConn.Write(msg.Data) // TODO Identify correct conn, do this in go routine
 		case messageTypeForwardRequest:
 			request, _ := message.(*ForwardRequest)
 			log.Println(">", request.Target)
@@ -79,7 +121,7 @@ func (d *daemon) listen(conn net.PacketConn) {
 
 			d.connectionId = request.Id
 
-			sendmsg(conn, addr, messageTypeForwardResponse, &ForwardResponse{
+			sendmsg(d.hubStream, messageTypeForwardResponse, &ForwardResponse{
 				Id: request.Id,
 				Success: true,
 				Source: request.Source,
@@ -88,36 +130,12 @@ func (d *daemon) listen(conn net.PacketConn) {
 				TargetAddr: request.TargetAddr,
 			})
 
-			go d.keepalive()
-			go d.read()
+			go func() {
+				for {
+					d.localUdpConn.WriteTo([]byte("ping"), d.peerUdpAddr)
+					time.Sleep(5 * time.Second)
+				}
+			}()
 		}
-	}
-}
-
-func (d *daemon) keepalive() {
-	for {
-		sendmsg(d.localUdpConn, d.peerUdpAddr, messageTypeKeepaliveRequest, &KeepaliveRequest{
-			Id: d.connectionId,
-			Rand: rand.Int31(),
-		})
-
-		time.Sleep(10 * time.Second)
-	}
-}
-
-func (d *daemon) read() {
-	buf := make([]byte, 500)
-
-	for {
-		n, err := d.forwardConn.Read(buf)
-
-		if err != nil {
-			panic(err)
-		}
-
-		sendmsg(d.localUdpConn, d.peerUdpAddr, messageTypeDataMessage, &DataMessage{
-			Id: d.connectionId,
-			Data: buf[:n],
-		})
 	}
 }

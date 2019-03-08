@@ -1,7 +1,10 @@
 package main
 
 import (
+	"crypto/tls"
 	"fmt"
+	"github.com/lucas-clemente/quic-go"
+	"io"
 	"log"
 	"math/rand"
 	"net"
@@ -10,15 +13,14 @@ import (
 
 type forward struct {
 	hubAddr          *net.UDPAddr
+	hubStream        quic.Stream
 
 	// TODO FIXME This should be per connection!
 	connectionId     string
 	localTcpListener net.Listener
 	localUdpConn     net.PacketConn
 	peerUdpAddr      *net.UDPAddr
-
-	// TODO FIXME This should be per TCP connection!
-	dataChan         chan DataMessage
+	peerStream       quic.Stream
 }
 
 func (f *forward) start(hubAddr string, source string, sourcePort int, target string, targetForwardAddr string) {
@@ -32,12 +34,26 @@ func (f *forward) start(hubAddr string, source string, sourcePort int, target st
 
 	// TODO This only supports one forward and one connection!!!
 
-	f.dataChan = make(chan DataMessage)
-
 	// Listen to local UDP address
 	rand.Seed(time.Now().Unix())
 	localUdpPort := fmt.Sprintf(":%d", 10000+rand.Intn(10000))
 	f.localUdpConn, err = net.ListenPacket("udp", localUdpPort)
+	if err != nil {
+		panic(err)
+	}
+
+	session, err := quic.Dial(f.localUdpConn, f.hubAddr, hubAddr, &tls.Config{InsecureSkipVerify: true},
+		&quic.Config{
+			KeepAlive: true,
+			ConnectionIDLength: 8,
+			Versions: []quic.VersionNumber{quic.VersionGQUIC43,
+		}})
+
+	if err != nil {
+		panic(err)
+	}
+
+	f.hubStream, err = session.OpenStream()
 	if err != nil {
 		panic(err)
 	}
@@ -48,46 +64,30 @@ func (f *forward) start(hubAddr string, source string, sourcePort int, target st
 		panic(err)
 	}
 
-	go f.listenUdp()
+	go f.readHub()
+	go f.writeHub(source, sourcePort, target, targetForwardAddr)
 	go f.listenTcp()
-	go f.sendRequest(source, sourcePort, target, targetForwardAddr)
 
 	for {
 		time.Sleep(30 * time.Second)
 	}
 }
 
-func (f *forward) sendRequest(source string, sourcePort int, target string, targetForwardAddr string) {
+func (f *forward) writeHub(source string, sourcePort int, target string, targetForwardAddr string) {
 	log.Printf("Requesting connection to %s:%d\n", target, targetForwardAddr)
 
-	request := &ForwardRequest{
+	sendmsg(f.hubStream, messageTypeForwardRequest, &ForwardRequest{
 		Source: source,
 		Target: target,
 		TargetForwardAddr: targetForwardAddr,
-	}
-
-	sendmsg(f.localUdpConn, f.hubAddr, messageTypeForwardRequest, request)
-
-	time.Sleep(5 * time.Second)
+	})
 }
 
-func (f *forward) listenUdp() {
+func (f *forward) readHub() {
 	for {
-		addr, messageType, message := recvmsg(f.localUdpConn)
+		messageType, message := recvmsg2(f.hubStream)
 
 		switch messageType {
-		case messageTypeKeepaliveResponse:
-			response, _ := message.(*KeepaliveResponse)
-			log.Println("> keepalive", response.Id)
-		case messageTypeKeepaliveRequest:
-			request, _ := message.(*KeepaliveRequest)
-			sendmsg(f.localUdpConn, addr, messageTypeKeepaliveResponse, &KeepaliveResponse{
-				Id: request.Id,
-				Rand: request.Rand,
-			})
-		case messageTypeDataMessage:
-			msg, _ := message.(*DataMessage)
-			f.dataChan <- *msg
 		case messageTypeForwardResponse:
 			response, _ := message.(*ForwardResponse)
 
@@ -100,9 +100,10 @@ func (f *forward) listenUdp() {
 					panic(err)
 				}
 
+
 				f.connectionId = response.Id
 
-				go f.keepalive()
+				go f.openPeerStream()
 			} else {
 				log.Println("Failed forward response")
 			}
@@ -112,55 +113,46 @@ func (f *forward) listenUdp() {
 }
 
 func (f *forward) listenTcp() {
+	for f.peerStream == nil { // TODO racy
+		log.Println("Cannot forward yet. UDP connection not active yet.")
+		time.Sleep(1 * time.Second)
+	}
+
 	for {
 		conn, err := f.localTcpListener.Accept()
 		if err != nil {
 			panic(err)
 		}
 
-		go f.handleTcpOutgoing(conn)
-		go f.handleTcpIncoming(conn)
+		go func() { io.Copy(f.peerStream, conn) }()
+		go func() { io.Copy(conn, f.peerStream) }()
 	}
 }
 
-func (f *forward) handleTcpOutgoing(conn net.Conn) {
-	for f.peerUdpAddr == nil { // TODO racy
-		log.Println("Cannot forward yet. UDP connection not active yet.")
-		time.Sleep(1 * time.Second)
-	}
-
-	buf := make([]byte, messageSendBufferBytes)
-
+func (f *forward) openPeerStream() {
 	for {
-		n, err := conn.Read(buf)
+		peerHost := fmt.Sprintf("%s:%d", f.peerUdpAddr.IP.String(), f.peerUdpAddr.Port)
+		session, err := quic.Dial(f.localUdpConn, f.peerUdpAddr,peerHost, &tls.Config{InsecureSkipVerify: true},
+			&quic.Config{
+				KeepAlive:true,
+				ConnectionIDLength: 8,
+				Versions: []quic.VersionNumber{quic.VersionGQUIC43},
+		})
+
 		if err != nil {
-			fmt.Println("Error reading:", err.Error())
-			break
+			panic(err)
 		}
 
-		sendmsg(f.localUdpConn, f.peerUdpAddr, messageTypeDataMessage, &DataMessage{
-			Id: f.connectionId,
-			Data: buf[:n],
-		})
+		f.peerStream, err = session.OpenStreamSync()
+
+		if err != nil {
+			log.Println("Not connected yet.")
+			time.Sleep(1)
+			continue
+		}
+
+		break
 	}
 
-	conn.Close()
-}
-
-func (f *forward) handleTcpIncoming(conn net.Conn) {
-	for {
-		msg := <-f.dataChan
-		conn.Write(msg.Data)
-	}
-}
-
-func (f *forward) keepalive() {
-	for {
-		sendmsg(f.localUdpConn, f.peerUdpAddr, messageTypeKeepaliveRequest, &KeepaliveRequest{
-			Id: f.connectionId,
-			Rand: rand.Int31(),
-		})
-
-		time.Sleep(15 * time.Second)
-	}
+	log.Println("Connected!")
 }

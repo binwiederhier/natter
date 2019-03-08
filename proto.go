@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
+	"encoding/binary"
 	"errors"
 	"github.com/golang/protobuf/proto"
+	"github.com/lucas-clemente/quic-go"
 	"log"
-	"net"
 )
 
 type messageType byte
@@ -38,92 +40,77 @@ var messageTypes = map[messageType]string {
 	messageTypeDataMessage: "DataMessage",
 }
 
-func sendmsg(conn net.PacketConn, addr net.Addr, messageType messageType, message proto.Message) {
-	bytes, err := proto.Marshal(message)
+func sendmsg(stream quic.Stream, messageType messageType, message proto.Message) {
+	messageBytes, err := proto.Marshal(message)
 	if err != nil {
 		panic(err)
 	}
 
-	log.Println("-> [" + messageTypes[messageType] + "] " + message.String())
+	messageTypeBytes := []byte{byte(messageType)}
 
-	bytes = append([]byte{byte(messageType)}, bytes...)
-	conn.WriteTo(bytes, addr)
+	messageLengthBuf := make([]byte, 4)
+	messageLengthLength := binary.PutVarint(messageLengthBuf, int64(len(messageBytes)))
+	messageLengthBytes := messageLengthBuf[:messageLengthLength]
+
+	stream.Write(messageTypeBytes)
+	stream.Write(messageLengthBytes)
+	stream.Write(messageBytes)
+
+	log.Println("-> [" + messageTypes[messageType] + "] " + message.(proto.Message).String())
 }
 
-func recvmsg(conn net.PacketConn) (from net.Addr, msgType messageType, message proto.Message) {
-	buf := make([]byte, messageReceiveBufferBytes)
-	n, addr, err := conn.ReadFrom(buf)
-	if n == 0 || err != nil {
+func recvmsg2(stream quic.Stream) (messageType, interface{}) {
+	reader := bufio.NewReader(stream)
+
+	messageTypeByte, err := reader.ReadByte()
+	if err != nil {
 		panic(err)
 	}
 
-	msgType = messageType(buf[0])
+	messageLength, err := binary.ReadVarint(reader)
+	if err != nil {
+		panic(err)
+	}
+	// TODO max len
 
-	switch msgType {
+	messageBytes := make([]byte, messageLength)
+	read, err := reader.Read(messageBytes)
+	if err != nil {
+		panic(err)
+	}
+
+	if int64(read) != messageLength {
+		panic(errors.New("invalid message len"))
+	}
+
+	messageType := messageType(messageTypeByte)
+
+	switch messageType {
 	case messageTypeRegisterRequest:
-		var message RegisterRequest
-		err = proto.Unmarshal(buf[1:n], &message)
-		if err != nil {
-			panic(err)
-		}
-
-		log.Println("<- [" + messageTypes[msgType] + "] " + message.String())
-		return addr, msgType, &message
+		return recvread(messageBytes, messageType, &RegisterRequest{})
 	case messageTypeRegisterResponse:
-		var message RegisterResponse
-		err = proto.Unmarshal(buf[1:n], &message)
-		if err != nil {
-			panic(err)
-		}
-
-		log.Println("<- [" + messageTypes[msgType] + "] " + message.String())
-		return addr, msgType, &message
+		return recvread(messageBytes, messageType, &RegisterResponse{})
 	case messageTypeForwardRequest:
-		var message ForwardRequest
-		err = proto.Unmarshal(buf[1:n], &message)
-		if err != nil {
-			panic(err)
-		}
-
-		log.Println("<- [" + messageTypes[msgType] + "] " + message.String())
-		return addr, msgType, &message
+		return recvread(messageBytes, messageType, &ForwardRequest{})
 	case messageTypeForwardResponse:
-		var message ForwardResponse
-		err = proto.Unmarshal(buf[1:n], &message)
-		if err != nil {
-			panic(err)
-		}
-
-		log.Println("<- [" + messageTypes[msgType] + "] " + message.String())
-		return addr, msgType, &message
+		return recvread(messageBytes, messageType, &ForwardResponse{})
 	case messageTypeKeepaliveRequest:
-		var message KeepaliveRequest
-		err = proto.Unmarshal(buf[1:n], &message)
-		if err != nil {
-			panic(err)
-		}
-
-		log.Println("<- [" + messageTypes[msgType] + "] " + message.String())
-		return addr, msgType, &message
+		return recvread(messageBytes, messageType, &KeepaliveRequest{})
 	case messageTypeKeepaliveResponse:
-		var message KeepaliveResponse
-		err = proto.Unmarshal(buf[1:n], &message)
-		if err != nil {
-			panic(err)
-		}
-
-		log.Println("<- [" + messageTypes[msgType] + "] " + message.String())
-		return addr, msgType, &message
+		return recvread(messageBytes, messageType, &KeepaliveResponse{})
 	case messageTypeDataMessage:
-		var message DataMessage
-		err = proto.Unmarshal(buf[1:n], &message)
-		if err != nil {
-			panic(err)
-		}
-
-		log.Println("<- [" + messageTypes[msgType] + "] " + message.String())
-		return addr, msgType, &message
+		return recvread(messageBytes, messageType, &DataMessage{})
 	default:
 		panic(errors.New("Unknown message"))
 	}
+}
+
+func recvread(messageBytes []byte, msgType messageType, message proto.Message) (messageType, proto.Message) {
+	err := proto.Unmarshal(messageBytes, message)
+	if err != nil {
+		panic(err)
+	}
+
+	log.Println("<- [" + messageTypes[msgType] + "] " + message.(proto.Message).String())
+	return msgType, message
 }
