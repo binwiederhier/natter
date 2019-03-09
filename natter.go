@@ -14,9 +14,9 @@ func main() {
 	forwardCommand := flag.NewFlagSet("forward", flag.ExitOnError)
 
 	daemonHub := daemonCommand.String("hub", "", "Hub server")
-	daemonName  := daemonCommand.String("name", "", "Client name")
+	daemonName := daemonCommand.String("name", "", "Client name")
 	forwardHub := forwardCommand.String("hub", "", "Hub server")
-	forwardName  := forwardCommand.String("name", "", "Client name")
+	forwardName := forwardCommand.String("name", "", "Client name")
 
 	if len(os.Args) < 2 {
 		syntax()

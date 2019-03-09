@@ -52,8 +52,8 @@ func echoServer() error {
 }
 
 func clientMain() error {
-	remoteAddr, _:= net.ResolveUDPAddr("udp", "localhost:9999")
-	conn, _:= net.ListenPacket("udp", "localhost:9998")
+	remoteAddr, _ := net.ResolveUDPAddr("udp", "localhost:9999")
+	conn, _ := net.ListenPacket("udp", "localhost:9998")
 
 	session, err := quic.Dial(conn, remoteAddr, "localhost:9999", &tls.Config{InsecureSkipVerify: true},
 		&quic.Config{Versions: []quic.VersionNumber{quic.VersionGQUIC43}})
@@ -91,7 +91,6 @@ func (w loggingWriter) Write(b []byte) (int, error) {
 	return w.Writer.Write(b)
 }
 
-
 // Setup a bare-bones TLS config for the server
 func generateTLSConfig() *tls.Config {
 	key, err := rsa.GenerateKey(rand.Reader, 1024)
@@ -112,4 +111,3 @@ func generateTLSConfig() *tls.Config {
 	}
 	return &tls.Config{Certificates: []tls.Certificate{tlsCert}}
 }
-

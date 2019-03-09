@@ -14,30 +14,30 @@ type messageType byte
 const (
 	protocolVersion = byte(0x01)
 
-	messageTypeRegisterRequest = messageType(0x01)
+	messageTypeRegisterRequest  = messageType(0x01)
 	messageTypeRegisterResponse = messageType(0x02)
 
 	messageTypeForwardRequest  = messageType(0x03)
 	messageTypeForwardResponse = messageType(0x04)
 
-	messageTypeKeepaliveRequest = messageType(0x05)
+	messageTypeKeepaliveRequest  = messageType(0x05)
 	messageTypeKeepaliveResponse = messageType(0x06)
-	messageTypeDataMessage = messageType(0x07)
+	messageTypeDataMessage       = messageType(0x07)
 
-	messageSendBufferBytes = 16 * 1024
+	messageSendBufferBytes    = 16 * 1024
 	messageReceiveBufferBytes = 18 * 1024 // Account for protobuf overhead!
 )
 
-var messageTypes = map[messageType]string {
-	messageTypeRegisterRequest: "RegisterRequest",
+var messageTypes = map[messageType]string{
+	messageTypeRegisterRequest:  "RegisterRequest",
 	messageTypeRegisterResponse: "RegisterResponse",
 
 	messageTypeForwardRequest:  "ForwardRequest",
 	messageTypeForwardResponse: "ForwardResponse",
 
-	messageTypeKeepaliveRequest: "KeepaliveRequest",
+	messageTypeKeepaliveRequest:  "KeepaliveRequest",
 	messageTypeKeepaliveResponse: "KeepaliveResponse",
-	messageTypeDataMessage: "DataMessage",
+	messageTypeDataMessage:       "DataMessage",
 }
 
 func sendmsg(stream quic.Stream, messageType messageType, message proto.Message) {

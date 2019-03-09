@@ -32,7 +32,7 @@ func (s *server) start(listenAddr string) {
 
 	listener, err := quic.ListenAddr(listenAddr, generateTLSConfig(), &quic.Config{
 		ConnectionIDLength: 8,
-		Versions: []quic.VersionNumber{quic.VersionGQUIC43}})
+		Versions:           []quic.VersionNumber{quic.VersionGQUIC43}})
 	if err != nil {
 		panic(err)
 	}
@@ -96,10 +96,10 @@ func (s *server) handleStream(session quic.Session, stream quic.Stream) {
 
 				id := createRandomString(8)
 				forward := &fwd{
-					id: id,
-					source: request.Source,
+					id:         id,
+					source:     request.Source,
 					sourceConn: &clientconn{addr: udpAddr, stream: stream},
-					target: request.Target,
+					target:     request.Target,
 					targetConn: nil,
 				}
 
@@ -107,11 +107,11 @@ func (s *server) handleStream(session quic.Session, stream quic.Stream) {
 				s.forwards[id] = forward
 
 				sendmsg(targetControl.stream, messageTypeForwardRequest, &ForwardRequest{
-					Id: id,
-					Source: request.Source,
-					SourceAddr: fmt.Sprintf("%s:%d", udpAddr.IP, udpAddr.Port),
-					Target: request.Target,
-					TargetAddr: fmt.Sprintf("%s:%d", targetControl.addr.IP, targetControl.addr.Port),
+					Id:                id,
+					Source:            request.Source,
+					SourceAddr:        fmt.Sprintf("%s:%d", udpAddr.IP, udpAddr.Port),
+					Target:            request.Target,
+					TargetAddr:        fmt.Sprintf("%s:%d", targetControl.addr.IP, targetControl.addr.Port),
 					TargetForwardAddr: request.TargetForwardAddr,
 				})
 			}
@@ -127,7 +127,6 @@ func (s *server) handleStream(session quic.Session, stream quic.Stream) {
 		}
 	}
 }
-
 
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 

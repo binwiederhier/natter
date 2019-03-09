@@ -18,8 +18,8 @@ type daemon struct {
 
 	// TODO this should be an array
 	connectionId string
-	peerUdpAddr *net.UDPAddr
-	forwardConn net.Conn
+	peerUdpAddr  *net.UDPAddr
+	forwardConn  net.Conn
 }
 
 func (d *daemon) start(hubAddr string, source string) {
@@ -42,10 +42,10 @@ func (d *daemon) start(hubAddr string, source string) {
 	// Open connection to hub
 	session, err := quic.Dial(d.localUdpConn, d.hubAddr, hubAddr, &tls.Config{InsecureSkipVerify: true},
 		&quic.Config{
-			KeepAlive: true,
+			KeepAlive:          true,
 			ConnectionIDLength: 8,
-			Versions: []quic.VersionNumber{quic.VersionGQUIC43},
-	})
+			Versions:           []quic.VersionNumber{quic.VersionGQUIC43},
+		})
 
 	if err != nil {
 		panic(err)
@@ -64,7 +64,7 @@ func (d *daemon) start(hubAddr string, source string) {
 		}
 	}()
 
-	listener, err := quic.Listen(d.localUdpConn, generateTLSConfig(), &quic.Config{KeepAlive:true})
+	listener, err := quic.Listen(d.localUdpConn, generateTLSConfig(), &quic.Config{KeepAlive: true})
 	if err != nil {
 		panic(err)
 	}
@@ -122,11 +122,11 @@ func (d *daemon) listenHubStream() {
 			d.connectionId = request.Id
 
 			sendmsg(d.hubStream, messageTypeForwardResponse, &ForwardResponse{
-				Id: request.Id,
-				Success: true,
-				Source: request.Source,
+				Id:         request.Id,
+				Success:    true,
+				Source:     request.Source,
 				SourceAddr: request.SourceAddr,
-				Target: request.Target,
+				Target:     request.Target,
 				TargetAddr: request.TargetAddr,
 			})
 

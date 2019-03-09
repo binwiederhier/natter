@@ -12,8 +12,8 @@ import (
 )
 
 type forward struct {
-	hubAddr          *net.UDPAddr
-	hubStream        quic.Stream
+	hubAddr   *net.UDPAddr
+	hubStream quic.Stream
 
 	// TODO FIXME This should be per connection!
 	connectionId     string
@@ -44,10 +44,10 @@ func (f *forward) start(hubAddr string, source string, sourcePort int, target st
 
 	session, err := quic.Dial(f.localUdpConn, f.hubAddr, hubAddr, &tls.Config{InsecureSkipVerify: true},
 		&quic.Config{
-			KeepAlive: true,
+			KeepAlive:          true,
 			ConnectionIDLength: 8,
 			Versions: []quic.VersionNumber{quic.VersionGQUIC43,
-		}})
+			}})
 
 	if err != nil {
 		panic(err)
@@ -77,8 +77,8 @@ func (f *forward) writeHub(source string, sourcePort int, target string, targetF
 	log.Printf("Requesting connection to %s:%d\n", target, targetForwardAddr)
 
 	sendmsg(f.hubStream, messageTypeForwardRequest, &ForwardRequest{
-		Source: source,
-		Target: target,
+		Source:            source,
+		Target:            target,
 		TargetForwardAddr: targetForwardAddr,
 	})
 }
@@ -99,7 +99,6 @@ func (f *forward) readHub() {
 				if err != nil {
 					panic(err)
 				}
-
 
 				f.connectionId = response.Id
 
@@ -132,12 +131,12 @@ func (f *forward) listenTcp() {
 func (f *forward) openPeerStream() {
 	for {
 		peerHost := fmt.Sprintf("%s:%d", f.peerUdpAddr.IP.String(), f.peerUdpAddr.Port)
-		session, err := quic.Dial(f.localUdpConn, f.peerUdpAddr,peerHost, &tls.Config{InsecureSkipVerify: true},
+		session, err := quic.Dial(f.localUdpConn, f.peerUdpAddr, peerHost, &tls.Config{InsecureSkipVerify: true},
 			&quic.Config{
-				KeepAlive:true,
+				KeepAlive:          true,
 				ConnectionIDLength: 8,
-				Versions: []quic.VersionNumber{quic.VersionGQUIC43},
-		})
+				Versions:           []quic.VersionNumber{quic.VersionGQUIC43},
+			})
 
 		if err != nil {
 			panic(err)
