@@ -1,4 +1,4 @@
-package main
+package natter
 
 import (
 	"crypto/tls"
@@ -11,19 +11,20 @@ import (
 	"time"
 )
 
-type forward struct {
+type forwarder struct {
+	udpConn          net.PacketConn
+
 	hubAddr   *net.UDPAddr
 	hubStream quic.Stream
 
 	// TODO FIXME This should be per connection!
 	connectionId     string
 	localTcpListener net.Listener
-	localUdpConn     net.PacketConn
 	peerUdpAddr      *net.UDPAddr
 	peerStream       quic.Stream
 }
 
-func (f *forward) start(hubAddr string, source string, sourcePort int, target string, targetForwardAddr string) {
+func (f *forwarder) Start(hubAddr string, source string, sourcePort int, target string, targetForwardAddr string) {
 	var err error
 
 	// Resolve hub address
@@ -35,14 +36,16 @@ func (f *forward) start(hubAddr string, source string, sourcePort int, target st
 	// TODO This only supports one forward and one connection!!!
 
 	// Listen to local UDP address
-	rand.Seed(time.Now().Unix())
-	localUdpPort := fmt.Sprintf(":%d", 10000+rand.Intn(10000))
-	f.localUdpConn, err = net.ListenPacket("udp", localUdpPort)
+	udpAddr := fmt.Sprintf(":%d", 10000+rand.Intn(10000))
+	log.Printf("[forwarder] Listening on UDP address %s\n", udpAddr)
+
+	f.udpConn, err = net.ListenPacket("udp", udpAddr)
 	if err != nil {
 		panic(err)
 	}
 
-	session, err := quic.Dial(f.localUdpConn, f.hubAddr, hubAddr, &tls.Config{InsecureSkipVerify: true},
+	log.Printf("[forwarder] Connecting to hub at %s\n", hubAddr)
+	session, err := quic.Dial(f.udpConn, f.hubAddr, hubAddr, &tls.Config{InsecureSkipVerify: true},
 		&quic.Config{
 			KeepAlive:          true,
 			ConnectionIDLength: 8,
@@ -59,7 +62,9 @@ func (f *forward) start(hubAddr string, source string, sourcePort int, target st
 	}
 
 	// Listen to local TCP address
-	f.localTcpListener, err = net.Listen("tcp", fmt.Sprintf(":%d", sourcePort))
+	localTcpAddr := fmt.Sprintf(":%d", sourcePort)
+	log.Printf("[forwarder] Listening on local TCP address %s\n", localTcpAddr)
+	f.localTcpListener, err = net.Listen("tcp", localTcpAddr)
 	if err != nil {
 		panic(err)
 	}
@@ -73,8 +78,8 @@ func (f *forward) start(hubAddr string, source string, sourcePort int, target st
 	}
 }
 
-func (f *forward) writeHub(source string, sourcePort int, target string, targetForwardAddr string) {
-	log.Printf("Requesting connection to %s:%d\n", target, targetForwardAddr)
+func (f *forwarder) writeHub(source string, sourcePort int, target string, targetForwardAddr string) {
+	log.Printf("[forwarder] Requesting connection via hub to target %s on TCP address %s\n", target, targetForwardAddr)
 
 	sendmsg(f.hubStream, messageTypeForwardRequest, &ForwardRequest{
 		Source:            source,
@@ -83,7 +88,7 @@ func (f *forward) writeHub(source string, sourcePort int, target string, targetF
 	})
 }
 
-func (f *forward) readHub() {
+func (f *forwarder) readHub() {
 	for {
 		messageType, message := recvmsg2(f.hubStream)
 
@@ -93,7 +98,7 @@ func (f *forward) readHub() {
 
 			if response.Success {
 				var err error
-				log.Print("Peer address: ", response.TargetAddr)
+				log.Print("[forwarder] Peer address: ", response.TargetAddr)
 
 				f.peerUdpAddr, err = net.ResolveUDPAddr("udp4", response.TargetAddr)
 				if err != nil {
@@ -111,9 +116,9 @@ func (f *forward) readHub() {
 	}
 }
 
-func (f *forward) listenTcp() {
+func (f *forwarder) listenTcp() {
 	for f.peerStream == nil { // TODO racy
-		log.Println("Cannot forward yet. UDP connection not active yet.")
+		log.Println("[forwarder] Cannot forward yet. UDP connection not active yet.")
 		time.Sleep(1 * time.Second)
 	}
 
@@ -123,15 +128,16 @@ func (f *forward) listenTcp() {
 			panic(err)
 		}
 
+		log.Println("[forwarder] Client connected on TCP socket, starting to forward.")
 		go func() { io.Copy(f.peerStream, conn) }()
 		go func() { io.Copy(conn, f.peerStream) }()
 	}
 }
 
-func (f *forward) openPeerStream() {
+func (f *forwarder) openPeerStream() {
 	for {
 		peerHost := fmt.Sprintf("%s:%d", f.peerUdpAddr.IP.String(), f.peerUdpAddr.Port)
-		session, err := quic.Dial(f.localUdpConn, f.peerUdpAddr, peerHost, &tls.Config{InsecureSkipVerify: true},
+		session, err := quic.Dial(f.udpConn, f.peerUdpAddr, peerHost, &tls.Config{InsecureSkipVerify: true},
 			&quic.Config{
 				KeepAlive:          true,
 				ConnectionIDLength: 8,
@@ -145,7 +151,7 @@ func (f *forward) openPeerStream() {
 		f.peerStream, err = session.OpenStreamSync()
 
 		if err != nil {
-			log.Println("Not connected yet.")
+			log.Println("[forwarder] Not connected yet.")
 			time.Sleep(1)
 			continue
 		}
@@ -153,5 +159,5 @@ func (f *forward) openPeerStream() {
 		break
 	}
 
-	log.Println("Connected!")
+	log.Println("[forwarder] Connected!")
 }

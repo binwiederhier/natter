@@ -1,4 +1,4 @@
-package main
+package natter
 
 import (
 	"crypto/tls"
@@ -12,17 +12,23 @@ import (
 )
 
 type daemon struct {
-	hubAddr      *net.UDPAddr
-	hubStream    quic.Stream
-	localUdpConn net.PacketConn
+	hubAddr   *net.UDPAddr
+	hubStream quic.Stream
+	udpConn   net.PacketConn
 
 	// TODO this should be an array
+	//forwards map[net.Addr]*incomingForward
+
 	connectionId string
 	peerUdpAddr  *net.UDPAddr
 	forwardConn  net.Conn
 }
 
-func (d *daemon) start(hubAddr string, source string) {
+type incomingForward struct {
+
+}
+
+func (d *daemon) Start(hubAddr string, source string) {
 	var err error
 
 	// Resolve hub address
@@ -32,15 +38,14 @@ func (d *daemon) start(hubAddr string, source string) {
 	}
 
 	// Listen to local UDP address
-	rand.Seed(time.Now().Unix())
 	localPort := fmt.Sprintf(":%d", 10000+rand.Intn(10000))
-	d.localUdpConn, err = net.ListenPacket("udp", localPort)
+	d.udpConn, err = net.ListenPacket("udp", localPort)
 	if err != nil {
 		panic(err)
 	}
 
 	// Open connection to hub
-	session, err := quic.Dial(d.localUdpConn, d.hubAddr, hubAddr, &tls.Config{InsecureSkipVerify: true},
+	session, err := quic.Dial(d.udpConn, d.hubAddr, hubAddr, &tls.Config{InsecureSkipVerify: true},
 		&quic.Config{
 			KeepAlive:          true,
 			ConnectionIDLength: 8,
@@ -64,12 +69,12 @@ func (d *daemon) start(hubAddr string, source string) {
 		}
 	}()
 
-	listener, err := quic.Listen(d.localUdpConn, generateTLSConfig(), &quic.Config{KeepAlive: true})
+	listener, err := quic.Listen(d.udpConn, generateTLSConfig(), &quic.Config{KeepAlive: true})
 	if err != nil {
 		panic(err)
 	}
 
-	log.Println("Waiting for connections")
+	log.Println("[daemon] Waiting for connections")
 	for {
 		session, err := listener.Accept()
 		if err != nil {
@@ -81,6 +86,8 @@ func (d *daemon) start(hubAddr string, source string) {
 }
 
 func (d *daemon) handlePeerSession(session quic.Session) {
+	log.Println("[daemon] Session from " + session.RemoteAddr().String() + " accepted.")
+
 	for {
 		stream, err := session.AcceptStream()
 		if err != nil {
@@ -92,6 +99,8 @@ func (d *daemon) handlePeerSession(session quic.Session) {
 }
 
 func (d *daemon) handlePeerStream(session quic.Session, stream quic.Stream) {
+	log.Printf("[daemon] Stream %d accepted. Starting to forward.\n", stream.StreamID())
+
 	go func() { io.Copy(stream, d.forwardConn) }()
 	go func() { io.Copy(d.forwardConn, stream) }()
 }
@@ -107,7 +116,7 @@ func (d *daemon) listenHubStream() {
 			// Nothing
 		case messageTypeForwardRequest:
 			request, _ := message.(*ForwardRequest)
-			log.Println(">", request.Target)
+			log.Println("[daemon] >", request.Target)
 
 			d.forwardConn, err = net.Dial("tcp", request.TargetForwardAddr)
 			if err != nil {
@@ -132,7 +141,7 @@ func (d *daemon) listenHubStream() {
 
 			go func() {
 				for {
-					d.localUdpConn.WriteTo([]byte("ping"), d.peerUdpAddr)
+					d.udpConn.WriteTo([]byte("ping"), d.peerUdpAddr)
 					time.Sleep(5 * time.Second)
 				}
 			}()

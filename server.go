@@ -1,4 +1,4 @@
-package main
+package natter
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 	"net"
 )
 
-type clientconn struct {
+type conn struct {
 	addr   *net.UDPAddr
 	stream quic.Stream
 }
@@ -16,18 +16,18 @@ type clientconn struct {
 type fwd struct {
 	id         string
 	source     string
-	sourceConn *clientconn
+	sourceConn *conn
 	target     string
-	targetConn *clientconn
+	targetConn *conn
 }
 
 type server struct {
-	control  map[string]*clientconn
+	control  map[string]*conn
 	forwards map[string]*fwd
 }
 
-func (s *server) start(listenAddr string) {
-	s.control = make(map[string]*clientconn)
+func (s *server) Start(listenAddr string) {
+	s.control = make(map[string]*conn)
 	s.forwards = make(map[string]*fwd)
 
 	listener, err := quic.ListenAddr(listenAddr, generateTLSConfig(), &quic.Config{
@@ -37,7 +37,7 @@ func (s *server) start(listenAddr string) {
 		panic(err)
 	}
 
-	log.Println("Waiting for connections")
+	log.Println("[server] Waiting for connections")
 	for {
 		session, err := listener.Accept()
 		if err != nil {
@@ -52,7 +52,7 @@ func (s *server) handleSession(session quic.Session) {
 	for {
 		stream, err := session.AcceptStream()
 		if err != nil {
-			log.Println("Session err: " + err.Error())
+			log.Println("[server] Session err: " + err.Error())
 			session.Close()
 			return
 		}
@@ -73,16 +73,16 @@ func (s *server) handleStream(session quic.Session, stream quic.Stream) {
 			request, _ := message.(*RegisterRequest)
 			remoteAddr := fmt.Sprintf("%s:%d", udpAddr.IP, udpAddr.Port)
 
-			log.Println("Client", request.Source, "with address", remoteAddr, "connected")
+			log.Println("[server] Client", request.Source, "with address", remoteAddr, "connected")
 
-			s.control[request.Source] = &clientconn{
+			s.control[request.Source] = &conn{
 				stream: stream,
 				addr:   udpAddr,
 			}
 
-			log.Println("Control table:")
+			log.Println("[server] Control table:")
 			for client, conn := range s.control {
-				log.Println("-", client, conn.addr)
+				log.Println("[server] -", client, conn.addr)
 			}
 
 			sendmsg(stream, messageTypeRegisterResponse, &RegisterResponse{Addr: remoteAddr})
@@ -98,12 +98,12 @@ func (s *server) handleStream(session quic.Session, stream quic.Stream) {
 				forward := &fwd{
 					id:         id,
 					source:     request.Source,
-					sourceConn: &clientconn{addr: udpAddr, stream: stream},
+					sourceConn: &conn{addr: udpAddr, stream: stream},
 					target:     request.Target,
 					targetConn: nil,
 				}
 
-				log.Printf("Adding new connection %s\n", id)
+				log.Printf("[server] Adding new connection %s\n", id)
 				s.forwards[id] = forward
 
 				sendmsg(targetControl.stream, messageTypeForwardRequest, &ForwardRequest{
@@ -119,7 +119,7 @@ func (s *server) handleStream(session quic.Session, stream quic.Stream) {
 			response, _ := message.(*ForwardResponse)
 
 			if _, ok := s.forwards[response.Id]; !ok {
-				log.Println("cannot forward response")
+				log.Println("[server] Cannot forward response")
 			} else {
 				fwd := s.forwards[response.Id]
 				sendmsg(fwd.sourceConn.stream, messageTypeForwardResponse, response)

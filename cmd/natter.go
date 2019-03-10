@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"heckel.io/natter"
 	"os"
 	"strconv"
 	"strings"
@@ -34,8 +35,8 @@ func main() {
 			syntax()
 		}
 
-		daemon := &daemon{}
-		daemon.start(*daemonHub, *daemonName)
+		daemon := natter.NewDaemon()
+		daemon.Start(*daemonHub, *daemonName)
 	case "forward":
 		if err := forwardCommand.Parse(os.Args[2:]); err != nil {
 			syntax()
@@ -63,8 +64,8 @@ func main() {
 		}
 		targetForwardAddr := fmt.Sprintf("%s:%d", targetForwardHost, targetForwardPort)
 
-		forward := &forward{}
-		forward.start(*forwardHub, *forwardName, sourcePort, target, targetForwardAddr)
+		forwarder := natter.NewForwarder()
+		forwarder.Start(*forwardHub, *forwardName, sourcePort, target, targetForwardAddr)
 	case "server":
 		if err := serverCommand.Parse(os.Args[2:]); err != nil {
 			syntax()
@@ -76,8 +77,8 @@ func main() {
 
 		listenAddr := serverCommand.Arg(0)
 
-		server := &server{}
-		server.start(listenAddr)
+		server := natter.NewServer()
+		server.Start(listenAddr)
 	default:
 		syntax()
 	}

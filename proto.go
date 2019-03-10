@@ -1,12 +1,18 @@
-package main
+package natter
 
 import (
 	"bufio"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
+	"encoding/pem"
 	"errors"
 	"github.com/golang/protobuf/proto"
 	"github.com/lucas-clemente/quic-go"
 	"log"
+	"math/big"
 )
 
 type messageType byte
@@ -19,13 +25,6 @@ const (
 
 	messageTypeForwardRequest  = messageType(0x03)
 	messageTypeForwardResponse = messageType(0x04)
-
-	messageTypeKeepaliveRequest  = messageType(0x05)
-	messageTypeKeepaliveResponse = messageType(0x06)
-	messageTypeDataMessage       = messageType(0x07)
-
-	messageSendBufferBytes    = 16 * 1024
-	messageReceiveBufferBytes = 18 * 1024 // Account for protobuf overhead!
 )
 
 var messageTypes = map[messageType]string{
@@ -34,10 +33,6 @@ var messageTypes = map[messageType]string{
 
 	messageTypeForwardRequest:  "ForwardRequest",
 	messageTypeForwardResponse: "ForwardResponse",
-
-	messageTypeKeepaliveRequest:  "KeepaliveRequest",
-	messageTypeKeepaliveResponse: "KeepaliveResponse",
-	messageTypeDataMessage:       "DataMessage",
 }
 
 func sendmsg(stream quic.Stream, messageType messageType, message proto.Message) {
@@ -94,12 +89,6 @@ func recvmsg2(stream quic.Stream) (messageType, interface{}) {
 		return recvread(messageBytes, messageType, &ForwardRequest{})
 	case messageTypeForwardResponse:
 		return recvread(messageBytes, messageType, &ForwardResponse{})
-	case messageTypeKeepaliveRequest:
-		return recvread(messageBytes, messageType, &KeepaliveRequest{})
-	case messageTypeKeepaliveResponse:
-		return recvread(messageBytes, messageType, &KeepaliveResponse{})
-	case messageTypeDataMessage:
-		return recvread(messageBytes, messageType, &DataMessage{})
 	default:
 		panic(errors.New("Unknown message"))
 	}
@@ -113,4 +102,26 @@ func recvread(messageBytes []byte, msgType messageType, message proto.Message) (
 
 	log.Println("<- [" + messageTypes[msgType] + "] " + message.(proto.Message).String())
 	return msgType, message
+}
+
+
+// Setup a bare-bones TLS config for the server
+func generateTLSConfig() *tls.Config {
+	key, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		panic(err)
+	}
+	template := x509.Certificate{SerialNumber: big.NewInt(1)}
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		panic(err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+
+	tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		panic(err)
+	}
+	return &tls.Config{Certificates: []tls.Certificate{tlsCert}}
 }

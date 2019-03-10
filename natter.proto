@@ -1,5 +1,5 @@
 syntax = "proto3";
-package main;
+package natter;
 
 // 0x01
 message RegisterRequest {
@@ -29,22 +29,4 @@ message ForwardResponse {
     string SourceAddr = 4;
     string Target = 5;
     string TargetAddr = 6;
-}
-
-// 0x05
-message KeepaliveRequest {
-    string Id = 1;
-    int32 rand = 2;
-}
-
-// 0x06
-message KeepaliveResponse {
-    string Id = 1;
-    int32 rand = 2;
-}
-
-// 0x07
-message DataMessage {
-    string Id = 1;
-    bytes Data = 2;
 }
