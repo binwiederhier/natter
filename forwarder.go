@@ -17,11 +17,13 @@ type forwarder struct {
 	hubAddr   *net.UDPAddr
 	hubStream quic.Stream
 
-	// TODO FIXME This should be per connection!
 	connectionId     string
-	localTcpListener net.Listener
 	peerUdpAddr      *net.UDPAddr
-	peerStream       quic.Stream
+	//peerStream       quic.Stream
+	localTcpListener net.Listener
+}
+
+type fconn struct {
 }
 
 func (f *forwarder) Start(hubAddr string, source string, sourcePort int, target string, targetForwardAddr string) {
@@ -107,7 +109,12 @@ func (f *forwarder) readHub() {
 
 				f.connectionId = response.Id
 
-				go f.openPeerStream()
+				go func() {
+					for {
+						f.udpConn.WriteTo([]byte("ping"), f.peerUdpAddr)
+						time.Sleep(5 * time.Second)
+					}
+				}()
 			} else {
 				log.Println("Failed forward response")
 			}
@@ -117,24 +124,22 @@ func (f *forwarder) readHub() {
 }
 
 func (f *forwarder) listenTcp() {
-	for f.peerStream == nil { // TODO racy
-		log.Println("[forwarder] Cannot forward yet. UDP connection not active yet.")
-		time.Sleep(1 * time.Second)
-	}
-
 	for {
 		conn, err := f.localTcpListener.Accept()
 		if err != nil {
 			panic(err)
 		}
 
-		log.Println("[forwarder] Client connected on TCP socket, starting to forward.")
-		go func() { io.Copy(f.peerStream, conn) }()
-		go func() { io.Copy(conn, f.peerStream) }()
+		log.Println("[forwarder] Client connected on TCP socket, opening stream ...")
+		go f.openPeerStream(conn)
 	}
 }
 
-func (f *forwarder) openPeerStream() {
+func (f *forwarder) openPeerStream(conn net.Conn) {
+	log.Print("[forwarder] Opening stream to peer")
+
+	var peerStream quic.Stream
+
 	for {
 		peerHost := fmt.Sprintf("%s:%d", f.peerUdpAddr.IP.String(), f.peerUdpAddr.Port)
 		session, err := quic.Dial(f.udpConn, f.peerUdpAddr, peerHost, &tls.Config{InsecureSkipVerify: true},
@@ -148,7 +153,7 @@ func (f *forwarder) openPeerStream() {
 			panic(err)
 		}
 
-		f.peerStream, err = session.OpenStreamSync()
+		peerStream, err = session.OpenStreamSync()
 
 		if err != nil {
 			log.Println("[forwarder] Not connected yet.")
@@ -159,5 +164,9 @@ func (f *forwarder) openPeerStream() {
 		break
 	}
 
-	log.Println("[forwarder] Connected!")
+	log.Println("[forwarder] Connected. Starting to forward.")
+
+	go func() { io.Copy(peerStream, conn) }()
+	go func() { io.Copy(conn, peerStream) }()
+
 }

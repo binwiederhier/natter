@@ -8,6 +8,7 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -16,19 +17,19 @@ type daemon struct {
 	hubStream quic.Stream
 	udpConn   net.PacketConn
 
-	// TODO this should be an array
-	//forwards map[net.Addr]*incomingForward
-
-	connectionId string
-	peerUdpAddr  *net.UDPAddr
-	forwardConn  net.Conn
+	fwmu sync.Mutex
+	forwards map[string]*forward
 }
 
-type incomingForward struct {
-
+type forward struct {
+	connectionId string
+	peerUdpAddr  *net.UDPAddr
+	targetForwardAddr string
 }
 
 func (d *daemon) Start(hubAddr string, source string) {
+	d.forwards = make(map[string]*forward)
+
 	var err error
 
 	// Resolve hub address
@@ -74,8 +75,8 @@ func (d *daemon) Start(hubAddr string, source string) {
 		panic(err)
 	}
 
-	log.Println("[daemon] Waiting for connections")
 	for {
+		log.Println("[daemon] Waiting for connections")
 		session, err := listener.Accept()
 		if err != nil {
 			panic(err)
@@ -88,26 +89,43 @@ func (d *daemon) Start(hubAddr string, source string) {
 func (d *daemon) handlePeerSession(session quic.Session) {
 	log.Println("[daemon] Session from " + session.RemoteAddr().String() + " accepted.")
 
+	peerAddr := session.RemoteAddr().(*net.UDPAddr)
+
+	d.fwmu.Lock()
+	forward, ok := d.forwards[peerAddr.String()]
+	d.fwmu.Unlock()
+
+	log.Println("[daemon] Client accepted from " + peerAddr.String() + ", forward found to " + forward.targetForwardAddr)
+
+	if !ok {
+		log.Printf("[daemon] Session from unexpected client %s. Closing.", peerAddr.String())
+		session.Close()
+		return
+	}
+
 	for {
 		stream, err := session.AcceptStream()
 		if err != nil {
 			panic(err)
 		}
 
-		go d.handlePeerStream(session, stream)
+		go d.handlePeerStream(session, stream, *forward)
 	}
 }
 
-func (d *daemon) handlePeerStream(session quic.Session, stream quic.Stream) {
+func (d *daemon) handlePeerStream(session quic.Session, stream quic.Stream, forward forward) {
 	log.Printf("[daemon] Stream %d accepted. Starting to forward.\n", stream.StreamID())
 
-	go func() { io.Copy(stream, d.forwardConn) }()
-	go func() { io.Copy(d.forwardConn, stream) }()
+	forwardConn, err := net.Dial("tcp", forward.targetForwardAddr)
+	if err != nil {
+		panic(err)
+	}
+
+	go func() { io.Copy(stream, forwardConn) }()
+	go func() { io.Copy(forwardConn, stream) }()
 }
 
 func (d *daemon) listenHubStream() {
-	var err error
-
 	for {
 		messageType, message := recvmsg2(d.hubStream)
 
@@ -116,19 +134,22 @@ func (d *daemon) listenHubStream() {
 			// Nothing
 		case messageTypeForwardRequest:
 			request, _ := message.(*ForwardRequest)
-			log.Println("[daemon] >", request.Target)
+			log.Printf("[daemon] Accepted forward request from %s to TCP addr %s", request.Source, request.TargetForwardAddr)
 
-			d.forwardConn, err = net.Dial("tcp", request.TargetForwardAddr)
+			peerUdpAddr, err := net.ResolveUDPAddr("udp4", request.SourceAddr)
 			if err != nil {
 				panic(err)
 			}
 
-			d.peerUdpAddr, err = net.ResolveUDPAddr("udp4", request.SourceAddr)
-			if err != nil {
-				panic(err)
+			forward := &forward{
+				connectionId: request.Id,
+				targetForwardAddr: request.TargetForwardAddr,
+				peerUdpAddr: peerUdpAddr,
 			}
 
-			d.connectionId = request.Id
+			d.fwmu.Lock()
+			d.forwards[peerUdpAddr.String()] = forward
+			d.fwmu.Unlock()
 
 			sendmsg(d.hubStream, messageTypeForwardResponse, &ForwardResponse{
 				Id:         request.Id,
@@ -141,7 +162,7 @@ func (d *daemon) listenHubStream() {
 
 			go func() {
 				for {
-					d.udpConn.WriteTo([]byte("ping"), d.peerUdpAddr)
+					d.udpConn.WriteTo([]byte("ping"), peerUdpAddr)
 					time.Sleep(5 * time.Second)
 				}
 			}()

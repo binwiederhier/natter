@@ -4,12 +4,16 @@ import (
 	"flag"
 	"fmt"
 	"heckel.io/natter"
+	"math/rand"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func main() {
+	rand.Seed(time.Now().UTC().UnixNano()) // TODO urgh!
+
 	serverCommand := flag.NewFlagSet("server", flag.ExitOnError)
 	daemonCommand := flag.NewFlagSet("daemon", flag.ExitOnError)
 	forwardCommand := flag.NewFlagSet("forward", flag.ExitOnError)
