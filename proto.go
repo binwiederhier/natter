@@ -13,13 +13,12 @@ import (
 	"github.com/lucas-clemente/quic-go"
 	"log"
 	"math/big"
+	"sync"
 )
 
 type messageType byte
 
 const (
-	protocolVersion = byte(0x01)
-
 	messageTypeRegisterRequest  = messageType(0x01)
 	messageTypeRegisterResponse = messageType(0x02)
 
@@ -35,7 +34,16 @@ var messageTypes = map[messageType]string{
 	messageTypeForwardResponse: "ForwardResponse",
 }
 
-func sendMessage(stream quic.Stream, messageType messageType, message proto.Message) {
+type messenger struct {
+	stream quic.Stream
+	sendmu sync.Mutex
+	receivemu sync.Mutex
+}
+
+func (messenger *messenger) send(messageType messageType, message proto.Message) {
+	messenger.sendmu.Lock()
+	defer messenger.sendmu.Unlock()
+
 	messageBytes, err := proto.Marshal(message)
 	if err != nil {
 		panic(err)
@@ -43,30 +51,43 @@ func sendMessage(stream quic.Stream, messageType messageType, message proto.Mess
 
 	messageTypeBytes := []byte{byte(messageType)}
 
-	messageLengthBuf := make([]byte, 4)
-	messageLengthLength := binary.PutVarint(messageLengthBuf, int64(len(messageBytes)))
-	messageLengthBytes := messageLengthBuf[:messageLengthLength]
+	messageLengthBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(messageLengthBytes, uint32(len(messageBytes)))
 
-	stream.Write(messageTypeBytes)
-	stream.Write(messageLengthBytes)
-	stream.Write(messageBytes)
+	messenger.stream.Write(messageTypeBytes)
+	messenger.stream.Write(messageLengthBytes)
+	messenger.stream.Write(messageBytes)
 
 	log.Println("-> [" + messageTypes[messageType] + "] " + message.(proto.Message).String())
 }
 
-func receiveMessage(stream quic.Stream) (messageType, interface{}) {
-	reader := bufio.NewReader(stream)
+func (messenger *messenger) receive() (messageType, proto.Message, error) {
+	messenger.receivemu.Lock()
+	defer messenger.receivemu.Unlock()
+
+	reader := bufio.NewReader(messenger.stream)
 
 	messageTypeByte, err := reader.ReadByte()
+
 	if err != nil {
-		panic(err)
+		return 0, nil, err
 	}
 
-	messageLength, err := binary.ReadVarint(reader)
+	messageLengthBytes := make([]byte, 4)
+	n, err := reader.Read(messageLengthBytes)
 	if err != nil {
-		panic(err)
+		return 0, nil, err
 	}
-	// TODO max len
+
+	if n != len(messageLengthBytes) {
+		return 0, nil, errors.New("cannot read message length")
+	}
+
+	messageLength := binary.BigEndian.Uint32(messageLengthBytes)
+
+	if messageLength > 1 * 1024 * 1024 {
+		return 0, nil, errors.New("message too large: " + string(messageLength))
+	}
 
 	messageBytes := make([]byte, messageLength)
 	read, err := reader.Read(messageBytes)
@@ -74,7 +95,7 @@ func receiveMessage(stream quic.Stream) (messageType, interface{}) {
 		panic(err)
 	}
 
-	if int64(read) != messageLength {
+	if read != int(messageLength) {
 		panic(errors.New("invalid message len"))
 	}
 
@@ -94,19 +115,22 @@ func receiveMessage(stream quic.Stream) (messageType, interface{}) {
 	}
 }
 
-func recvread(messageBytes []byte, msgType messageType, message proto.Message) (messageType, proto.Message) {
+func (messenger *messenger) close() {
+	messenger.stream.Close()
+}
+
+func recvread(messageBytes []byte, msgType messageType, message proto.Message) (messageType, proto.Message, error) {
 	err := proto.Unmarshal(messageBytes, message)
 	if err != nil {
-		panic(err)
+		return 0, nil, err
 	}
 
 	log.Println("<- [" + messageTypes[msgType] + "] " + message.(proto.Message).String())
-	return msgType, message
+	return msgType, message, nil
 }
 
-
 // Setup a bare-bones TLS config for the server
-func generateTLSConfig() *tls.Config {
+func generateTlsConfig() *tls.Config {
 	key, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {
 		panic(err)

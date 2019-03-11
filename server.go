@@ -3,22 +3,22 @@ package natter
 import (
 	"fmt"
 	"github.com/lucas-clemente/quic-go"
+	"github.com/lucas-clemente/quic-go/qerr"
 	"log"
-	"math/rand"
 	"net"
 )
 
-type conn struct {
+type client struct {
 	addr   *net.UDPAddr
-	stream quic.Stream
+	messenger *messenger
 }
 
 type fwd struct {
 	id         string
 	source     string
-	sourceConn *conn
+	sourceConn *client
 	target     string
-	targetConn *conn
+	targetConn *client
 }
 
 func NewServer() *server {
@@ -26,24 +26,25 @@ func NewServer() *server {
 }
 
 type server struct {
-	control  map[string]*conn
+	clients  map[string]*client
 	forwards map[string]*fwd
 }
 
 func (s *server) Start(listenAddr string) {
-	s.control = make(map[string]*conn)
+	s.clients = make(map[string]*client)
 	s.forwards = make(map[string]*fwd)
 
-	listener, err := quic.ListenAddr(listenAddr, generateTLSConfig(), generateQuicConfig()) // TODO fix this
+	listener, err := quic.ListenAddr(listenAddr, generateTlsConfig(), generateQuicConfig()) // TODO fix this
 	if err != nil {
 		panic(err)
 	}
 
-	log.Println("[server] Waiting for connections")
+	log.Println("Waiting for connections")
 	for {
 		session, err := listener.Accept()
 		if err != nil {
-			panic(err)
+			log.Println("Accepting client failed: " + err.Error())
+			continue
 		}
 
 		go s.handleSession(session)
@@ -54,66 +55,77 @@ func (s *server) handleSession(session quic.Session) {
 	for {
 		stream, err := session.AcceptStream()
 		if err != nil {
-			log.Println("[server] Session err: " + err.Error())
+			log.Println("Session err: " + err.Error())
 			session.Close()
 			return
 		}
 
-		go s.handleStream(session, stream)
+		messenger := &messenger{stream: stream}
+		go s.handleStream(session, messenger)
 	}
 }
 
-func (s *server) handleStream(session quic.Session, stream quic.Stream) {
+func (s *server) handleStream(session quic.Session, messenger *messenger) {
 	addr := session.RemoteAddr()
 
 	for {
-		messageType, message := receiveMessage(stream)
 		udpAddr, _ := addr.(*net.UDPAddr)
+		messageType, message, err := messenger.receive()
+
+		if err != nil {
+			if quicerr, ok := err.(*qerr.QuicError); ok && quicerr.ErrorCode == qerr.NetworkIdleTimeout {
+				log.Println("Network idle timeout. Closing stream: " + err.Error())
+				messenger.close()
+				break
+			}
+
+			log.Println("Cannot read message: " + err.Error())
+			continue
+		}
 
 		switch messageType {
 		case messageTypeRegisterRequest:
 			request, _ := message.(*RegisterRequest)
 			remoteAddr := fmt.Sprintf("%s:%d", udpAddr.IP, udpAddr.Port)
 
-			log.Println("[server] Client", request.Source, "with address", remoteAddr, "connected")
+			log.Println("Client", request.Source, "with address", remoteAddr, "connected")
 
-			s.control[request.Source] = &conn{
-				stream: stream,
+			s.clients[request.Source] = &client{
+				messenger: messenger,
 				addr:   udpAddr,
 			}
 
-			log.Println("[server] Control table:")
-			for client, conn := range s.control {
-				log.Println("[server] -", client, conn.addr)
+			log.Println("Control table:")
+			for client, conn := range s.clients {
+				log.Println("-", client, conn.addr)
 			}
 
-			sendMessage(stream, messageTypeRegisterResponse, &RegisterResponse{Addr: remoteAddr})
+			messenger.send(messageTypeRegisterResponse, &RegisterResponse{Addr: remoteAddr})
 		case messageTypeForwardRequest:
 			request, _ := message.(*ForwardRequest)
 
-			if _, ok := s.control[request.Target]; !ok {
-				sendMessage(stream, messageTypeForwardResponse, &ForwardResponse{Success: false})
+			if _, ok := s.clients[request.Target]; !ok {
+				messenger.send(messageTypeForwardResponse, &ForwardResponse{Success: false})
 			} else {
-				targetControl := s.control[request.Target]
-
+				target := s.clients[request.Target]
 
 				forward := &fwd{
 					id:         request.Id,
 					source:     request.Source,
-					sourceConn: &conn{addr: udpAddr, stream: stream},
+					sourceConn: &client{addr: udpAddr, messenger: messenger},
 					target:     request.Target,
 					targetConn: nil,
 				}
 
-				log.Printf("[server] Adding new connection %s\n", request.Id)
+				log.Printf("Adding new connection %s\n", request.Id)
 				s.forwards[request.Id] = forward
 
-				sendMessage(targetControl.stream, messageTypeForwardRequest, &ForwardRequest{
+				target.messenger.send(messageTypeForwardRequest, &ForwardRequest{
 					Id:                request.Id,
 					Source:            request.Source,
 					SourceAddr:        fmt.Sprintf("%s:%d", udpAddr.IP, udpAddr.Port),
 					Target:            request.Target,
-					TargetAddr:        fmt.Sprintf("%s:%d", targetControl.addr.IP, targetControl.addr.Port),
+					TargetAddr:        fmt.Sprintf("%s:%d", target.addr.IP, target.addr.Port),
 					TargetForwardAddr: request.TargetForwardAddr,
 				})
 			}
@@ -121,21 +133,12 @@ func (s *server) handleStream(session quic.Session, stream quic.Stream) {
 			response, _ := message.(*ForwardResponse)
 
 			if _, ok := s.forwards[response.Id]; !ok {
-				log.Println("[server] Cannot forward response")
+				log.Println("Cannot forward response")
 			} else {
 				fwd := s.forwards[response.Id]
-				sendMessage(fwd.sourceConn.stream, messageTypeForwardResponse, response)
+				source := fwd.sourceConn
+				source.messenger.send(messageTypeForwardResponse, response)
 			}
 		}
 	}
-}
-
-const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
-func createRandomString(n int) string {
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = letterBytes[rand.Intn(len(letterBytes))]
-	}
-	return string(b)
 }
