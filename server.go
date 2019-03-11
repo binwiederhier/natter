@@ -21,6 +21,10 @@ type fwd struct {
 	targetConn *conn
 }
 
+func NewServer() *server {
+	return &server{}
+}
+
 type server struct {
 	control  map[string]*conn
 	forwards map[string]*fwd

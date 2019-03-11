@@ -9,6 +9,15 @@ import (
 )
 
 func main() {
+	client := natter.NewClient(natter.ClientConfig{
+		ClientId:   "alice",
+		ServerAddr: "localhost:10000",
+	})
+
+	client.Forward()
+	client.ListenAndForward()
+
+
 	daemon := natter.NewDaemon()
 	forwarder := natter.NewForwarder()
 	server := natter.NewServer()

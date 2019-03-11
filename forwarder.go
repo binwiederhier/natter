@@ -19,11 +19,11 @@ type forwarder struct {
 
 	connectionId     string
 	peerUdpAddr      *net.UDPAddr
-	//peerStream       quic.Stream
 	localTcpListener net.Listener
 }
 
-type fconn struct {
+func NewForwarder() *forwarder {
+	return &forwarder{}
 }
 
 func (f *forwarder) Start(hubAddr string, source string, sourcePort int, target string, targetForwardAddr string) {
@@ -47,12 +47,7 @@ func (f *forwarder) Start(hubAddr string, source string, sourcePort int, target 
 	}
 
 	log.Printf("[forwarder] Connecting to hub at %s\n", hubAddr)
-	session, err := quic.Dial(f.udpConn, f.hubAddr, hubAddr, &tls.Config{InsecureSkipVerify: true},
-		&quic.Config{
-			KeepAlive:          true,
-			ConnectionIDLength: 8,
-			Versions: []quic.VersionNumber{quic.VersionGQUIC43,
-			}})
+	session, err := quic.Dial(f.udpConn, f.hubAddr, hubAddr, generateQuicTlsClientConfig(), generateQuicConfig())
 
 	if err != nil {
 		panic(err)
@@ -168,5 +163,4 @@ func (f *forwarder) openPeerStream(conn net.Conn) {
 
 	go func() { io.Copy(peerStream, conn) }()
 	go func() { io.Copy(conn, peerStream) }()
-
 }

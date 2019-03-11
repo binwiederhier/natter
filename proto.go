@@ -125,3 +125,15 @@ func generateTLSConfig() *tls.Config {
 	}
 	return &tls.Config{Certificates: []tls.Certificate{tlsCert}}
 }
+
+func generateQuicTlsClientConfig() *tls.Config {
+	return &tls.Config{InsecureSkipVerify: true}
+}
+
+func generateQuicConfig() *quic.Config {
+	return &quic.Config{
+		KeepAlive:          true,
+		ConnectionIDLength: 8,
+		Versions: []quic.VersionNumber{quic.VersionGQUIC43},
+	}
+}

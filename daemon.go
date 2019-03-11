@@ -1,7 +1,6 @@
 package natter
 
 import (
-	"crypto/tls"
 	"fmt"
 	"github.com/lucas-clemente/quic-go"
 	"io"
@@ -27,6 +26,10 @@ type forward struct {
 	targetForwardAddr string
 }
 
+func NewDaemon() *daemon {
+	return &daemon{}
+}
+
 func (d *daemon) Start(hubAddr string, source string) {
 	d.forwards = make(map[string]*forward)
 
@@ -46,12 +49,7 @@ func (d *daemon) Start(hubAddr string, source string) {
 	}
 
 	// Open connection to hub
-	session, err := quic.Dial(d.udpConn, d.hubAddr, hubAddr, &tls.Config{InsecureSkipVerify: true},
-		&quic.Config{
-			KeepAlive:          true,
-			ConnectionIDLength: 8,
-			Versions:           []quic.VersionNumber{quic.VersionGQUIC43},
-		})
+	session, err := quic.Dial(d.udpConn, d.hubAddr, hubAddr, generateQuicTlsClientConfig(), generateQuicConfig())
 
 	if err != nil {
 		panic(err)
