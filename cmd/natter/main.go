@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"heckel.io/natter"
+	"log"
 	"math/rand"
 	"os"
 	"strconv"
@@ -59,6 +60,7 @@ func main() {
 		if err != nil {
 			syntax()
 		}
+		sourceAddr := fmt.Sprintf(":%d", sourcePort)
 
 		target := spec[1]
 		targetForwardHost := spec[2]
@@ -68,8 +70,14 @@ func main() {
 		}
 		targetForwardAddr := fmt.Sprintf("%s:%d", targetForwardHost, targetForwardPort)
 
-		forwarder := natter.NewForwarder()
-		forwarder.Start(*forwardHub, *forwardName, sourcePort, target, targetForwardAddr)
+		client, _ := natter.NewClient(*forwardName, *forwardHub, nil)
+		_, err = client.Forward(sourceAddr, target, targetForwardAddr)
+
+		if err != nil {
+			log.Fatalln(err)
+		}
+
+		select { }
 	case "server":
 		if err := serverCommand.Parse(os.Args[2:]); err != nil {
 			syntax()

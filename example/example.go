@@ -9,17 +9,7 @@ import (
 )
 
 func main() {
-	client := natter.NewClient(natter.ClientConfig{
-		ClientId:   "alice",
-		ServerAddr: "localhost:10000",
-	})
-
-	client.Forward()
-	client.ListenAndForward()
-
-
 	daemon := natter.NewDaemon()
-	forwarder := natter.NewForwarder()
 	server := natter.NewServer()
 
 	go server.Start(":10000")
@@ -28,14 +18,15 @@ func main() {
 	go echoServer()
 
 	time.Sleep(1 * time.Second)
-	go forwarder.Start("localhost:10000", "alice", 20000, "bob", ":30000")
+
+	alice, _ := natter.NewClient("alice", "localhost:10000", nil)
+	alice.Forward(2000, "bob", ":22")
 
 	time.Sleep(1 * time.Second)
 
 	go echoClient("Benny", 500)
 	go echoClient("Lena", 600)
 
-	time.Sleep(10 * time.Second)
 }
 
 func echoClient(name string, wait int) {

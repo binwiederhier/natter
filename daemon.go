@@ -63,7 +63,7 @@ func (d *daemon) Start(hubAddr string, source string) {
 	go d.listenHubStream()
 	go func() {
 		for {
-			sendmsg(d.hubStream, messageTypeRegisterRequest, &RegisterRequest{Source: source})
+			sendMessage(d.hubStream, messageTypeRegisterRequest, &RegisterRequest{Source: source})
 			time.Sleep(15 * time.Second)
 		}
 	}()
@@ -125,7 +125,7 @@ func (d *daemon) handlePeerStream(session quic.Session, stream quic.Stream, forw
 
 func (d *daemon) listenHubStream() {
 	for {
-		messageType, message := recvmsg2(d.hubStream)
+		messageType, message := receiveMessage(d.hubStream)
 
 		switch messageType {
 		case messageTypeRegisterResponse:
@@ -149,7 +149,7 @@ func (d *daemon) listenHubStream() {
 			d.forwards[peerUdpAddr.String()] = forward
 			d.fwmu.Unlock()
 
-			sendmsg(d.hubStream, messageTypeForwardResponse, &ForwardResponse{
+			sendMessage(d.hubStream, messageTypeForwardResponse, &ForwardResponse{
 				Id:         request.Id,
 				Success:    true,
 				Source:     request.Source,

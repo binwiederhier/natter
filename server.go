@@ -34,9 +34,7 @@ func (s *server) Start(listenAddr string) {
 	s.control = make(map[string]*conn)
 	s.forwards = make(map[string]*fwd)
 
-	listener, err := quic.ListenAddr(listenAddr, generateTLSConfig(), &quic.Config{
-		ConnectionIDLength: 8,
-		Versions:           []quic.VersionNumber{quic.VersionGQUIC43}})
+	listener, err := quic.ListenAddr(listenAddr, generateTLSConfig(), generateQuicConfig()) // TODO fix this
 	if err != nil {
 		panic(err)
 	}
@@ -69,7 +67,7 @@ func (s *server) handleStream(session quic.Session, stream quic.Stream) {
 	addr := session.RemoteAddr()
 
 	for {
-		messageType, message := recvmsg2(stream)
+		messageType, message := receiveMessage(stream)
 		udpAddr, _ := addr.(*net.UDPAddr)
 
 		switch messageType {
@@ -89,29 +87,29 @@ func (s *server) handleStream(session quic.Session, stream quic.Stream) {
 				log.Println("[server] -", client, conn.addr)
 			}
 
-			sendmsg(stream, messageTypeRegisterResponse, &RegisterResponse{Addr: remoteAddr})
+			sendMessage(stream, messageTypeRegisterResponse, &RegisterResponse{Addr: remoteAddr})
 		case messageTypeForwardRequest:
 			request, _ := message.(*ForwardRequest)
 
 			if _, ok := s.control[request.Target]; !ok {
-				sendmsg(stream, messageTypeForwardResponse, &ForwardResponse{Success: false})
+				sendMessage(stream, messageTypeForwardResponse, &ForwardResponse{Success: false})
 			} else {
 				targetControl := s.control[request.Target]
 
-				id := createRandomString(8)
+
 				forward := &fwd{
-					id:         id,
+					id:         request.Id,
 					source:     request.Source,
 					sourceConn: &conn{addr: udpAddr, stream: stream},
 					target:     request.Target,
 					targetConn: nil,
 				}
 
-				log.Printf("[server] Adding new connection %s\n", id)
-				s.forwards[id] = forward
+				log.Printf("[server] Adding new connection %s\n", request.Id)
+				s.forwards[request.Id] = forward
 
-				sendmsg(targetControl.stream, messageTypeForwardRequest, &ForwardRequest{
-					Id:                id,
+				sendMessage(targetControl.stream, messageTypeForwardRequest, &ForwardRequest{
+					Id:                request.Id,
 					Source:            request.Source,
 					SourceAddr:        fmt.Sprintf("%s:%d", udpAddr.IP, udpAddr.Port),
 					Target:            request.Target,
@@ -126,7 +124,7 @@ func (s *server) handleStream(session quic.Session, stream quic.Stream) {
 				log.Println("[server] Cannot forward response")
 			} else {
 				fwd := s.forwards[response.Id]
-				sendmsg(fwd.sourceConn.stream, messageTypeForwardResponse, response)
+				sendMessage(fwd.sourceConn.stream, messageTypeForwardResponse, response)
 			}
 		}
 	}

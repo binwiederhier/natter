@@ -35,7 +35,7 @@ var messageTypes = map[messageType]string{
 	messageTypeForwardResponse: "ForwardResponse",
 }
 
-func sendmsg(stream quic.Stream, messageType messageType, message proto.Message) {
+func sendMessage(stream quic.Stream, messageType messageType, message proto.Message) {
 	messageBytes, err := proto.Marshal(message)
 	if err != nil {
 		panic(err)
@@ -54,7 +54,7 @@ func sendmsg(stream quic.Stream, messageType messageType, message proto.Message)
 	log.Println("-> [" + messageTypes[messageType] + "] " + message.(proto.Message).String())
 }
 
-func recvmsg2(stream quic.Stream) (messageType, interface{}) {
+func receiveMessage(stream quic.Stream) (messageType, interface{}) {
 	reader := bufio.NewReader(stream)
 
 	messageTypeByte, err := reader.ReadByte()
