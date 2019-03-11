@@ -4,108 +4,139 @@ import (
 	"flag"
 	"fmt"
 	"heckel.io/natter"
-	"log"
-	"math/rand"
 	"os"
-	"strconv"
 	"strings"
-	"time"
 )
 
 func main() {
-	rand.Seed(time.Now().UTC().UnixNano()) // TODO urgh!
+	serverFlag := flag.Bool("server", false, "Run in server mode")
+	configFlag := flag.String("config", "", "Config file")
+	nameFlag := flag.String("name", "", "Client name")
+	brokerFlag := flag.String("broker", "", "Server address, e.g. example.com:9999")
+	listenFlag := flag.Bool("listen", false, "Run client in listen mode")
 
-	serverCommand := flag.NewFlagSet("server", flag.ExitOnError)
-	daemonCommand := flag.NewFlagSet("daemon", flag.ExitOnError)
-	forwardCommand := flag.NewFlagSet("forward", flag.ExitOnError)
+	flag.Parse()
 
-	daemonHub := daemonCommand.String("hub", "", "Hub server")
-	daemonName := daemonCommand.String("name", "", "Client name")
-	forwardHub := forwardCommand.String("hub", "", "Hub server")
-	forwardName := forwardCommand.String("name", "", "Client name")
+	if *serverFlag {
+		runServer()
+	} else {
+		runClient(configFlag, nameFlag, brokerFlag, listenFlag)
+	}
+}
 
-	if len(os.Args) < 2 {
+func runClient(configFlag *string, nameFlag *string, brokerFlag *string, listenFlag *bool) {
+	config := loadClientConfig(configFlag, nameFlag, brokerFlag)
+
+	client, err := natter.NewClient(config)
+	if err != nil {
+		fail(err)
+	}
+
+	if *listenFlag {
+		err = client.Listen()
+		if err != nil {
+			fail(err)
+		}
+	}
+
+	for i := 0; i < flag.NArg(); i++ {
+		spec := strings.Split(flag.Arg(i), ":")
+
+		if len(spec) == 3 {
+			sourceAddr := ":" + spec[0]
+			target := spec[1]
+			targetForwardAddr := ":" + spec[2]
+
+			_, err = client.Forward(sourceAddr, target, targetForwardAddr)
+			if err != nil {
+				fail(err)
+			}
+		} else if len(spec) == 4 {
+			sourceAddr := ":" + spec[0]
+			target := spec[1]
+			targetForwardAddr := spec[2] + ":" + spec[3]
+
+			_, err = client.Forward(sourceAddr, target, targetForwardAddr)
+			if err != nil {
+				fail(err)
+			}
+		} else {
+			syntax()
+		}
+	}
+
+	select { }
+}
+
+func fail(err error) {
+	fmt.Println(err.Error())
+	os.Exit(1)
+}
+
+func loadClientConfig(configFlag *string, nameFlag *string, brokerFlag *string) *natter.ClientConfig {
+	var config *natter.ClientConfig
+	var err error
+
+	if *configFlag != "" {
+		config, err = natter.LoadClientConfig(*configFlag)
+		if err != nil {
+			fmt.Println("Invalid config file:", err.Error())
+			os.Exit(1)
+		}
+	} else {
+		config = &natter.ClientConfig{}
+	}
+
+	if *nameFlag != "" {
+		config.ClientUser = *nameFlag
+	}
+
+	if *brokerFlag != "" {
+		config.BrokerAddr = *brokerFlag
+	}
+
+	if config.ClientUser == "" {
+		fmt.Println("Client name cannot be empty.")
+		os.Exit(1)
+	}
+
+	if config.BrokerAddr == "" {
+		fmt.Println("Broker address cannot be empty.")
+		os.Exit(1)
+	}
+
+	return config
+}
+
+func runServer() {
+	if flag.NArg() < 1 {
 		syntax()
 	}
 
-	command := os.Args[1]
+	listenAddr := flag.Arg(0)
 
-	switch command {
-	case "daemon":
-		if err := daemonCommand.Parse(os.Args[2:]); err != nil {
-			syntax()
-		}
-
-		if *daemonHub == "" || *daemonName == "" {
-			syntax()
-		}
-
-		daemon := natter.NewDaemon()
-		daemon.Start(*daemonHub, *daemonName)
-	case "forward":
-		if err := forwardCommand.Parse(os.Args[2:]); err != nil {
-			syntax()
-		}
-
-		if forwardCommand.NArg() < 1 || *forwardHub == "" || *forwardName == "" {
-			syntax()
-		}
-
-		spec := strings.Split(forwardCommand.Arg(0), ":")
-		if len(spec) != 4 {
-			syntax()
-		}
-
-		sourcePort, err := strconv.Atoi(spec[0])
-		if err != nil {
-			syntax()
-		}
-		sourceAddr := fmt.Sprintf(":%d", sourcePort)
-
-		target := spec[1]
-		targetForwardHost := spec[2]
-		targetForwardPort, err := strconv.Atoi(spec[3])
-		if err != nil {
-			syntax()
-		}
-		targetForwardAddr := fmt.Sprintf("%s:%d", targetForwardHost, targetForwardPort)
-
-		client, _ := natter.NewClient(*forwardName, *forwardHub, nil)
-		_, err = client.Forward(sourceAddr, target, targetForwardAddr)
-
-		if err != nil {
-			log.Fatalln(err)
-		}
-
-		select { }
-	case "server":
-		if err := serverCommand.Parse(os.Args[2:]); err != nil {
-			syntax()
-		}
-
-		if serverCommand.NArg() < 1 {
-			syntax()
-		}
-
-		listenAddr := serverCommand.Arg(0)
-
-		server := natter.NewServer()
-		server.Start(listenAddr)
-	default:
-		syntax()
-	}
+	server := natter.NewServer()
+	server.Start(listenAddr)
 }
 
 func syntax() {
 	fmt.Println("Syntax:")
+	fmt.Println("  natter -server :PORT")
+	fmt.Println("    Start the rendevous server on PORT for new client connections")
 	fmt.Println()
-	fmt.Println("natter server :PORT")
-	fmt.Println("  Start the rendevous server on PORT for new client connections")
+	fmt.Println("  natter [-name CLIENTNAME] [-broker BROKER] [-listen] FORWARDSPEC ...")
+	fmt.Println("    Start client side daemon to listen for incoming forwards")
 	fmt.Println()
-	fmt.Println("natter daemon -hub HUBHOST -name LOCALUSER")
-	fmt.Println("  Start client side daemon to listen for incoming forwards")
+	fmt.Println("  Forward spec:")
+	fmt.Println("    LOCALPORT:TARGET:TARGETPORT")
+	fmt.Println("    LOCALPORT:TARGET:TARGETHOST:TARGETPORT")
 	fmt.Println()
-	fmt.Println("natter forward -hub HUBHOST -name LOCALUSER LOCALPORT:TARGET:[TARGETHOST]:TARGETPORT")
-	fmt.Println("  Forwarding TCP traffic from local port LOCALPORT to target machine TARGETPORT")
+	fmt.Println("Example:")
+	fmt.Println("  natter -config alice.conf 8022:bob:22")
+	fmt.Println("    Forward local TCP port 8022 to bob's TCP port 22")
+	fmt.Println()
+	fmt.Println("  natter -config alice.conf -listen 8022:bob:10.0.1.1:22")
+	fmt.Println("    Forward local TCP port 8022 to TCP address 10.0.1.1:22 in bob's network,")
+	fmt.Println("    and also listen for incoming forwards")
 	os.Exit(1)
 }

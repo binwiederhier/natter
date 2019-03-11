@@ -9,28 +9,31 @@ import (
 )
 
 func main() {
-	daemon := natter.NewDaemon()
 	server := natter.NewServer()
-
-	go server.Start(":10000")
-	go daemon.Start("localhost:10000", "bob")
-
+	go server.Start(":5000")
 	go echoServer()
 
 	time.Sleep(1 * time.Second)
 
-	alice, _ := natter.NewClient("alice", "localhost:10000", nil)
-	alice.Forward(2000, "bob", ":22")
+	bob, _ := natter.NewClient(&natter.ClientConfig{ClientUser: "bob", BrokerAddr: "localhost:5000"})
+	bob.Listen()
 
 	time.Sleep(1 * time.Second)
 
-	go echoClient("Benny", 500)
-	go echoClient("Lena", 600)
+	alice, _ := natter.NewClient(&natter.ClientConfig{ClientUser: "alice", BrokerAddr: "localhost:5000"})
+	alice.Forward(":6000", "bob", ":7000")
+	alice.Forward(":6001", "bob", ":7000")
 
+	time.Sleep(1 * time.Second)
+
+	go echoClient("localhost:6000", "Benny", 500)
+	go echoClient("localhost:6001", "Lena", 600)
+
+	time.Sleep(5 * time.Second)
 }
 
-func echoClient(name string, wait int) {
-	conn, _ := net.Dial("tcp", "localhost:20000")
+func echoClient(server string, name string, wait int) {
+	conn, _ := net.Dial("tcp", server)
 
 	for i := 1; i <= 5; i++ {
 		conn.Write([]byte(fmt.Sprintf("%s says %d", name, i)))
@@ -39,15 +42,16 @@ func echoClient(name string, wait int) {
 
 	conn.Close()
 }
+
 func echoServer() {
-	listen, err := net.Listen("tcp", ":30000")
+	listen, err := net.Listen("tcp", ":7000")
 	if err != nil {
 		panic(err)
 	}
 
 	for {
 		conn, _ := listen.Accept()
-		io.Copy(loggingWriter{conn}, conn)
+		go io.Copy(loggingWriter{conn}, conn)
 	}
 }
 

@@ -1,5 +1,8 @@
 package natter
 
+// TODO allow forwarding from STDIN
+// TODO allow forwarding to remote command
+
 import (
 	"errors"
 	"fmt"
@@ -12,53 +15,59 @@ import (
 	"time"
 )
 
-type client struct {
-	clientId string
-	config   *ClientConfig
-	serverAddr   *net.UDPAddr
-	serverStream quic.Stream
-	udpConn net.PacketConn
-	mu sync.RWMutex
-	incomingForwards map[string]*inforward
-	outgoingForwards map[string]*outforward
-}
-
-type inforward struct {
-	connectionId string
-	peerUdpAddr  *net.UDPAddr
-	targetForwardAddr string
+type Client struct {
+	config           *ClientConfig
+	brokerAddr       *net.UDPAddr
+	brokerStream     quic.Stream
+	udpConn          net.PacketConn
+	forwards         map[string]*outforward
+	forwardsAddrToId map[string]string
+	forwardsMutex    sync.RWMutex
 }
 
 type outforward struct {
-	mu sync.RWMutex
-	peerUdpAddr  *net.UDPAddr
-	status string
-
-	id string
-	source string
-	sourceAddr string
-	target string
+	mutex             sync.RWMutex
+	peerUdpAddr       *net.UDPAddr
+	status            string
+	id                string
+	source            string
+	sourceAddr        string
+	target            string
 	targetForwardAddr string
 }
 
 func (outforward *outforward) Status() string {
-	outforward.mu.RLock()
-	defer outforward.mu.RUnlock()
+	outforward.mutex.RLock()
+	defer outforward.mutex.RUnlock()
 	return outforward.status
 }
 
 type ClientConfig struct {
-
+	ClientUser string
+	BrokerAddr string
 }
 
-func NewClient(clientId string, serverAddr string, config *ClientConfig) (*client, error) {
-	rand.Seed(time.Now().UTC().UnixNano())
-
-	if clientId == "" {
-		return nil, errors.New("client identifier cannot be empty")
+func NewClientFromFile(filename string) (*Client, error) {
+	config, err := LoadClientConfig(filename)
+	if err != nil {
+		return nil, err
 	}
 
-	udpServerAddr, err := net.ResolveUDPAddr("udp4", serverAddr)
+	return NewClient(config)
+}
+
+func NewClient(config *ClientConfig) (*Client, error) {
+	rand.Seed(time.Now().UTC().UnixNano())
+
+	if config.ClientUser == "" {
+		return nil, errors.New("invalid config: ClientUser cannot be empty")
+	}
+
+	if config.BrokerAddr == "" {
+		return nil, errors.New("invalid config: ServerAddr cannot be empty")
+	}
+
+	udpBrokerAddr, err := net.ResolveUDPAddr("udp4", config.BrokerAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -67,37 +76,78 @@ func NewClient(clientId string, serverAddr string, config *ClientConfig) (*clien
 		config = &ClientConfig{}
 	}
 
-	return &client{
-		clientId:   clientId,
-		config:     config,
-		serverAddr: udpServerAddr,
-		serverStream: nil,
-		udpConn: nil,
-		incomingForwards: make(map[string]*inforward),
-		outgoingForwards: make(map[string]*outforward),
+	return &Client{
+		config:           config,
+		brokerAddr:       udpBrokerAddr,
+		brokerStream:     nil,
+		udpConn:          nil,
+		forwards:         make(map[string]*outforward),
+		forwardsAddrToId: make(map[string]string),
+		forwardsMutex:    sync.RWMutex{},
 	}, nil
 }
 
-func (client *client) Forward(localAddr string, target string, targetForwardAddr string) (*outforward, error) {
+func LoadClientConfig(filename string) (*ClientConfig, error) {
+	rawconfig, err := loadRawConfig(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	clientUser, ok := rawconfig["ClientUser"]
+	if !ok {
+		return nil, errors.New("invalid config file, ClientUser setting is missing")
+	}
+
+	brokerAddr, ok := rawconfig["BrokerAddr"]
+	if !ok {
+		return nil, errors.New("invalid config file, Server setting is missing")
+	}
+
+	return &ClientConfig{
+		ClientUser: clientUser,
+		BrokerAddr: brokerAddr,
+	}, nil
+}
+
+func (client *Client) Listen() error {
 	err := client.connectToServer()
 	if err != nil {
-		return nil, errors.New("cannot connect to server: " + err.Error())
+		return errors.New("cannot connect to broker: " + err.Error())
+	}
+
+	listener, err := quic.Listen(client.udpConn, generateTLSConfig(), generateQuicConfig()) // TODO
+	if err != nil {
+		return errors.New("cannot listen on UDP socket for incoming connectiongs.")
+	}
+
+	go client.checkin()
+	go client.listenPeers(listener)
+
+	return nil
+}
+
+func (client *Client) Forward(localAddr string, target string, targetForwardAddr string) (*outforward, error) {
+	log.Printf("Adding forward from local address %s to %s %s\n", localAddr, target, targetForwardAddr)
+
+	err := client.connectToServer()
+	if err != nil {
+		return nil, errors.New("cannot connect to broker: " + err.Error())
 	}
 
 	// Create forward entry
 	forward := &outforward{
 		id: createRandomString(8),
 		status: "created", // TODO
-		source: client.clientId,
+		source: client.config.ClientUser,
 		sourceAddr: localAddr,
 		target: target,
 		targetForwardAddr: targetForwardAddr,
 	}
 
-	client.mu.Lock()
-	defer client.mu.Unlock()
+	client.forwardsMutex.Lock()
+	defer client.forwardsMutex.Unlock()
 
-	client.outgoingForwards[forward.id] = forward
+	client.forwards[forward.id] = forward
 
 	// Listen to local TCP address
 	log.Printf("Listening on local TCP address %s\n", localAddr)
@@ -110,7 +160,7 @@ func (client *client) Forward(localAddr string, target string, targetForwardAddr
 
 	// Sending forward request
 	log.Printf("Requesting connection to target %s on TCP address %s\n", target, targetForwardAddr)
-	sendMessage(client.serverStream, messageTypeForwardRequest, &ForwardRequest{
+	sendMessage(client.brokerStream, messageTypeForwardRequest, &ForwardRequest{
 		Id:                forward.id,
 		Source:            forward.source,
 		Target:            forward.target,
@@ -120,11 +170,11 @@ func (client *client) Forward(localAddr string, target string, targetForwardAddr
 	return forward, nil
 }
 
-func (client *client) connectToServer() error {
+func (client *Client) connectToServer() error {
 	var err error
 
 	// Check if already connected
-	if client.serverStream != nil {
+	if client.brokerStream != nil {
 		return nil
 	}
 
@@ -137,26 +187,26 @@ func (client *client) connectToServer() error {
 		return err
 	}
 
-	log.Printf("Connecting to server at %s\n", client.serverAddr.String())
-	session, err := quic.Dial(client.udpConn, client.serverAddr, client.serverAddr.String(),
+	log.Printf("Connecting to broker at %s\n", client.brokerAddr.String())
+	session, err := quic.Dial(client.udpConn, client.brokerAddr, client.brokerAddr.String(),
 		generateQuicTlsClientConfig(), generateQuicConfig()) // TODO fix this
 	if err != nil {
 		return err
 	}
 
-	client.serverStream, err = session.OpenStream()
+	client.brokerStream, err = session.OpenStream()
 	if err != nil {
 		return err
 	}
 
-	go client.listenServerStream()
+	go client.listenBrokerStream()
 
 	return nil
 }
 
-func (client *client) listenServerStream() {
+func (client *Client) listenBrokerStream() {
 	for {
-		messageType, message := receiveMessage(client.serverStream)
+		messageType, message := receiveMessage(client.brokerStream)
 
 		switch messageType {
 		case messageTypeRegisterResponse:
@@ -171,7 +221,7 @@ func (client *client) listenServerStream() {
 	}
 }
 
-func (client *client) listenTcp(forward *outforward, listener net.Listener) {
+func (client *Client) listenTcp(forward *outforward, listener net.Listener) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -184,16 +234,17 @@ func (client *client) listenTcp(forward *outforward, listener net.Listener) {
 	}
 }
 
-func (client *client) openPeerStream(forward *outforward, conn net.Conn) {
+func (client *Client) openPeerStream(forward *outforward, conn net.Conn) {
 	log.Print("[forwarder] Opening stream to peer")
 
 	var peerUdpAddr *net.UDPAddr
 	var peerStream quic.Stream
 
+	// TODO fix this ugly wait loop
 	for {
-		forward.mu.RLock()
+		forward.mutex.RLock()
 		peerUdpAddr = forward.peerUdpAddr
-		forward.mu.RUnlock()
+		forward.mutex.RUnlock()
 
 		if peerUdpAddr != nil {
 			break
@@ -229,11 +280,11 @@ func (client *client) openPeerStream(forward *outforward, conn net.Conn) {
 	go func() { io.Copy(conn, peerStream) }()
 }
 
-func (client *client) handleRegisterResponse(response *RegisterResponse) {
+func (client *Client) handleRegisterResponse(response *RegisterResponse) {
 	// Nothing.
 }
 
-func (client *client) handleForwardRequest(request *ForwardRequest) {
+func (client *Client) handleForwardRequest(request *ForwardRequest) {
 	// TODO ignore if not in "daemon mode"
 
 	log.Printf("Accepted forward request from %s to TCP addr %s", request.Source, request.TargetForwardAddr)
@@ -241,19 +292,26 @@ func (client *client) handleForwardRequest(request *ForwardRequest) {
 	peerUdpAddr, err := net.ResolveUDPAddr("udp4", request.SourceAddr)
 	if err != nil {
 		log.Println("Cannot resolve peer udp addr: " + err.Error())
-		sendMessage(client.serverStream, messageTypeForwardResponse, &ForwardResponse{Success: false})
+		sendMessage(client.brokerStream, messageTypeForwardResponse, &ForwardResponse{Success: false})
 		return
 	}
 
-	forward := &inforward{
-		connectionId: request.Id,
+	forward := &outforward{
+		id: request.Id,
+		source: request.Source,
+		sourceAddr: request.SourceAddr,
+		target: request.Target,
 		targetForwardAddr: request.TargetForwardAddr,
 		peerUdpAddr: peerUdpAddr,
 	}
 
-	client.incomingForwards[peerUdpAddr.String()] = forward
+	client.forwardsMutex.Lock()
+	defer client.forwardsMutex.Unlock()
 
-	sendMessage(client.serverStream, messageTypeForwardResponse, &ForwardResponse{
+	client.forwards[request.Id] = forward
+	client.forwardsAddrToId[peerUdpAddr.String()] = request.Id
+
+	sendMessage(client.brokerStream, messageTypeForwardResponse, &ForwardResponse{
 		Id:         request.Id,
 		Success:    true,
 		Source:     request.Source,
@@ -262,15 +320,14 @@ func (client *client) handleForwardRequest(request *ForwardRequest) {
 		TargetAddr: request.TargetAddr,
 	})
 
-	// TODO add proper method, add doneChan
 	go client.punch(peerUdpAddr)
 }
 
-func (client *client) handleForwardResponse(response *ForwardResponse) {
-	client.mu.Lock()
-	defer client.mu.Unlock()
+func (client *Client) handleForwardResponse(response *ForwardResponse) {
+	client.forwardsMutex.Lock()
+	defer client.forwardsMutex.Unlock()
 
-	forward, ok := client.outgoingForwards[response.Id]
+	forward, ok := client.forwards[response.Id]
 
 	if !ok {
 		log.Println("Forward response with invalid ID received. Ignoring.")
@@ -296,7 +353,7 @@ func (client *client) handleForwardResponse(response *ForwardResponse) {
 	go client.punch(forward.peerUdpAddr)
 }
 
-func (client *client) punch(udpAddr *net.UDPAddr) {
+func (client *Client) punch(udpAddr *net.UDPAddr) {
 	// TODO add doneChan support!!
 
 	for {
@@ -305,3 +362,69 @@ func (client *client) punch(udpAddr *net.UDPAddr) {
 	}
 }
 
+func (client *Client) checkin() {
+	// TODO add doneChan support
+
+	for {
+		sendMessage(client.brokerStream, messageTypeRegisterRequest, &RegisterRequest{Source: client.config.ClientUser})
+		time.Sleep(15 * time.Second)
+	}
+}
+
+func (client *Client) handlePeerSession(session quic.Session) {
+	log.Println("[daemon] Session from " + session.RemoteAddr().String() + " accepted.")
+	peerAddr := session.RemoteAddr().(*net.UDPAddr)
+
+	client.forwardsMutex.Lock()
+	connectionId, ok := client.forwardsAddrToId[peerAddr.String()]
+	if !ok {
+		log.Printf("[daemon] Session from unexpected client %s. Closing.", peerAddr.String())
+		session.Close()
+		client.forwardsMutex.Unlock()
+		return
+	}
+
+	forward, ok := client.forwards[connectionId]
+	if !ok {
+		log.Printf("[daemon] Cannot find forward for connection ID %s. Closing.", connectionId)
+		session.Close()
+		client.forwardsMutex.Unlock()
+		return
+	}
+
+	targetForwardAddr := forward.targetForwardAddr
+	log.Println("[daemon] Client accepted from " + peerAddr.String() + ", forward found to " + targetForwardAddr)
+	client.forwardsMutex.Unlock()
+
+	for {
+		stream, err := session.AcceptStream()
+		if err != nil {
+			panic(err)
+		}
+
+		go client.handlePeerStream(session, stream, targetForwardAddr)
+	}
+}
+
+func (client *Client) listenPeers(listener quic.Listener) {
+	for {
+		log.Println("[daemon] Waiting for connections")
+		session, err := listener.Accept()
+		if err != nil {
+			panic(err)
+		}
+
+		go client.handlePeerSession(session)
+	}
+}
+func (client *Client) handlePeerStream(session quic.Session, stream quic.Stream, targetForwardAddr string) {
+	log.Printf("[daemon] Stream %d accepted. Starting to forward.\n", stream.StreamID())
+
+	forwardConn, err := net.Dial("tcp", targetForwardAddr)
+	if err != nil {
+		panic(err)
+	}
+
+	go func() { io.Copy(stream, forwardConn) }()
+	go func() { io.Copy(forwardConn, stream) }()
+}
