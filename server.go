@@ -14,10 +14,7 @@ type client struct {
 }
 
 type fwd struct {
-	id         string
-	source     string
 	sourceConn *client
-	target     string
 	targetConn *client
 }
 
@@ -105,15 +102,15 @@ func (s *server) handleStream(session quic.Session, messenger *messenger) {
 			request, _ := message.(*ForwardRequest)
 
 			if _, ok := s.clients[request.Target]; !ok {
-				messenger.send(messageTypeForwardResponse, &ForwardResponse{Success: false})
+				messenger.send(messageTypeForwardResponse, &ForwardResponse{
+					Id: request.Id,
+					Success: false,
+				})
 			} else {
 				target := s.clients[request.Target]
 
 				forward := &fwd{
-					id:         request.Id,
-					source:     request.Source,
 					sourceConn: &client{addr: udpAddr, messenger: messenger},
-					target:     request.Target,
 					targetConn: nil,
 				}
 

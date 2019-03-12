@@ -25,7 +25,7 @@ func main() {
 }
 
 func runClient(configFlag *string, nameFlag *string, brokerFlag *string, listenFlag *bool) {
-	config := loadClientConfig(configFlag, nameFlag, brokerFlag)
+	config := loadConfig(configFlag, nameFlag, brokerFlag)
 	client := createClient(config)
 
 	// Process -listen flag
@@ -66,7 +66,7 @@ func runClient(configFlag *string, nameFlag *string, brokerFlag *string, listenF
 	select { }
 }
 
-func loadClientConfig(configFlag *string, nameFlag *string, brokerFlag *string) *natter.ClientConfig {
+func loadConfig(configFlag *string, nameFlag *string, brokerFlag *string) *natter.ClientConfig {
 	var config *natter.ClientConfig
 	var err error
 

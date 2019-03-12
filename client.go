@@ -52,15 +52,6 @@ type ClientConfig struct {
 
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-func NewClientFromFile(filename string) (*Client, error) {
-	config, err := LoadClientConfig(filename)
-	if err != nil {
-		return nil, err
-	}
-
-	return NewClient(config)
-}
-
 func NewClient(config *ClientConfig) (*Client, error) {
 	rand.Seed(time.Now().UTC().UnixNano())
 
