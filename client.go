@@ -21,13 +21,13 @@ type Client struct {
 	brokerAddr       *net.UDPAddr
 	brokerMessenger  *messenger
 	udpConn          net.PacketConn
-	forwards         map[string]*outforward
+	forwards         map[string]*forward
 	forwardsAddrToId map[string]string
-	forwardsMutex    sync.RWMutex
+
+	sync.RWMutex
 }
 
-type outforward struct {
-	mutex             sync.RWMutex
+type forward struct {
 	peerUdpAddr       *net.UDPAddr
 	status            string
 	id                string
@@ -35,12 +35,14 @@ type outforward struct {
 	sourceAddr        string
 	target            string
 	targetForwardAddr string
+
+	sync.RWMutex
 }
 
-func (outforward *outforward) PeerUdpAddr() *net.UDPAddr {
-	outforward.mutex.RLock()
-	defer outforward.mutex.RUnlock()
-	return outforward.peerUdpAddr
+func (forward *forward) PeerUdpAddr() *net.UDPAddr {
+	forward.RLock()
+	defer forward.RUnlock()
+	return forward.peerUdpAddr
 }
 
 type ClientConfig struct {
@@ -75,18 +77,13 @@ func NewClient(config *ClientConfig) (*Client, error) {
 		return nil, err
 	}
 
-	if config == nil {
-		config = &ClientConfig{}
-	}
-
 	return &Client{
 		config:           config,
 		brokerAddr:       udpBrokerAddr,
 		brokerMessenger:  nil,
 		udpConn:          nil,
-		forwards:         make(map[string]*outforward),
+		forwards:         make(map[string]*forward),
 		forwardsAddrToId: make(map[string]string),
-		forwardsMutex:    sync.RWMutex{},
 	}, nil
 }
 
@@ -129,7 +126,7 @@ func (client *Client) Listen() error {
 	return nil
 }
 
-func (client *Client) Forward(localAddr string, target string, targetForwardAddr string) (*outforward, error) {
+func (client *Client) Forward(localAddr string, target string, targetForwardAddr string) (*forward, error) {
 	log.Printf("Adding forward from local address %s to %s %s\n", localAddr, target, targetForwardAddr)
 
 	err := client.connectToServer()
@@ -138,7 +135,7 @@ func (client *Client) Forward(localAddr string, target string, targetForwardAddr
 	}
 
 	// Create forward entry
-	forward := &outforward{
+	forward := &forward{
 		id: client.createRandomString(8),
 		status: "created", // TODO
 		source: client.config.ClientUser,
@@ -147,8 +144,8 @@ func (client *Client) Forward(localAddr string, target string, targetForwardAddr
 		targetForwardAddr: targetForwardAddr,
 	}
 
-	client.forwardsMutex.Lock()
-	defer client.forwardsMutex.Unlock()
+	client.Lock()
+	defer client.Unlock()
 
 	client.forwards[forward.id] = forward
 
@@ -182,6 +179,9 @@ func (client *Client) createRandomString(n int) string {
 }
 
 func (client *Client) connectToServer() error {
+	client.Lock()
+	defer client.Unlock()
+
 	var err error
 
 	// Check if already connected
@@ -243,7 +243,7 @@ func (client *Client) listenBrokerMessages() {
 	}
 }
 
-func (client *Client) listenTcp(forward *outforward, listener net.Listener) {
+func (client *Client) listenTcp(forward *forward, listener net.Listener) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -251,12 +251,11 @@ func (client *Client) listenTcp(forward *outforward, listener net.Listener) {
 			continue
 		}
 
-		log.Println("Client connected on TCP socket, opening stream ...")
 		go client.openPeerStream(forward, conn)
 	}
 }
 
-func (client *Client) openPeerStream(forward *outforward, conn net.Conn) {
+func (client *Client) openPeerStream(forward *forward, conn net.Conn) {
 	log.Print("Opening stream to peer")
 
 	var peerStream quic.Stream
@@ -311,7 +310,7 @@ func (client *Client) handleForwardRequest(request *ForwardRequest) {
 		return
 	}
 
-	forward := &outforward{
+	forward := &forward{
 		id: request.Id,
 		source: request.Source,
 		sourceAddr: request.SourceAddr,
@@ -320,8 +319,8 @@ func (client *Client) handleForwardRequest(request *ForwardRequest) {
 		peerUdpAddr: peerUdpAddr,
 	}
 
-	client.forwardsMutex.Lock()
-	defer client.forwardsMutex.Unlock()
+	client.Lock()
+	defer client.Unlock()
 
 	client.forwards[request.Id] = forward
 	client.forwardsAddrToId[peerUdpAddr.String()] = request.Id
@@ -339,8 +338,8 @@ func (client *Client) handleForwardRequest(request *ForwardRequest) {
 }
 
 func (client *Client) handleForwardResponse(response *ForwardResponse) {
-	client.forwardsMutex.Lock()
-	defer client.forwardsMutex.Unlock()
+	client.Lock()
+	defer client.Unlock()
 
 	forward, ok := client.forwards[response.Id]
 
@@ -390,12 +389,12 @@ func (client *Client) handlePeerSession(session quic.Session) {
 	log.Println("Session from " + session.RemoteAddr().String() + " accepted.")
 	peerAddr := session.RemoteAddr().(*net.UDPAddr)
 
-	client.forwardsMutex.Lock()
+	client.Lock()
 	connectionId, ok := client.forwardsAddrToId[peerAddr.String()]
 	if !ok {
 		log.Printf("Session from unexpected client %s. Closing.", peerAddr.String())
 		session.Close()
-		client.forwardsMutex.Unlock()
+		client.Unlock()
 		return
 	}
 
@@ -403,13 +402,13 @@ func (client *Client) handlePeerSession(session quic.Session) {
 	if !ok {
 		log.Printf("Cannot find forward for connection ID %s. Closing.", connectionId)
 		session.Close()
-		client.forwardsMutex.Unlock()
+		client.Unlock()
 		return
 	}
 
 	targetForwardAddr := forward.targetForwardAddr
 	log.Println("Client accepted from " + peerAddr.String() + ", forward found to " + targetForwardAddr)
-	client.forwardsMutex.Unlock()
+	client.Unlock()
 
 	for {
 		stream, err := session.AcceptStream()
@@ -436,6 +435,7 @@ func (client *Client) listenPeers(listener quic.Listener) {
 		go client.handlePeerSession(session)
 	}
 }
+
 func (client *Client) handlePeerStream(session quic.Session, stream quic.Stream, targetForwardAddr string) {
 	log.Printf("Stream %d accepted. Starting to forward.\n", stream.StreamID())
 
