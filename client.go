@@ -52,6 +52,8 @@ type ClientConfig struct {
 
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
+// NewClient creates a new client struct. It checks the configuration
+// passed and returns an error if it is invalid.
 func NewClient(config *ClientConfig) (*Client, error) {
 	rand.Seed(time.Now().UTC().UnixNano())
 
@@ -100,7 +102,7 @@ func LoadClientConfig(filename string) (*ClientConfig, error) {
 	}, nil
 }
 
-func (client *Client) Listen() error {
+func (client *Client) ListenIncoming() error {
 	err := client.connectToServer()
 	if err != nil {
 		return errors.New("cannot connect to broker: " + err.Error())

@@ -1,7 +1,6 @@
 package natter
 
 import (
-	"bufio"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -11,6 +10,7 @@ import (
 	"errors"
 	"github.com/golang/protobuf/proto"
 	"github.com/lucas-clemente/quic-go"
+	"io"
 	"log"
 	"math/big"
 	"sync"
@@ -54,9 +54,14 @@ func (messenger *messenger) send(messageType messageType, message proto.Message)
 	messageLengthBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(messageLengthBytes, uint32(len(messageBytes)))
 
-	messenger.stream.Write(messageTypeBytes)
-	messenger.stream.Write(messageLengthBytes)
-	messenger.stream.Write(messageBytes)
+	send := messageTypeBytes
+	send = append(send, messageLengthBytes[:]...)
+	send = append(send, messageBytes[:]...)
+
+	_, err = messenger.stream.Write(send)
+	if err != nil {
+		panic(err)
+	}
 
 	log.Println("-> [" + messageTypes[messageType] + "] " + message.(proto.Message).String())
 }
@@ -65,68 +70,58 @@ func (messenger *messenger) receive() (messageType, proto.Message, error) {
 	messenger.receivemu.Lock()
 	defer messenger.receivemu.Unlock()
 
-	reader := bufio.NewReader(messenger.stream)
+	var (
+		messageTypeBytes = make([]byte, 1)
+		messageLengthBytes = make([]byte, 4)
+		messageLength uint32
+		messageBytes []byte
+	)
 
-	messageTypeByte, err := reader.ReadByte()
-
-	if err != nil {
+	if _, err := io.ReadFull(messenger.stream, messageTypeBytes); err != nil {
 		return 0, nil, err
 	}
 
-	messageLengthBytes := make([]byte, 4)
-	n, err := reader.Read(messageLengthBytes)
-	if err != nil {
+	if _, err := io.ReadFull(messenger.stream, messageLengthBytes); err != nil {
 		return 0, nil, err
 	}
 
-	if n != len(messageLengthBytes) {
-		return 0, nil, errors.New("cannot read message length")
+	if messageLength = binary.BigEndian.Uint32(messageLengthBytes); messageLength > 8192 {
+		return 0, nil, errors.New("message too long")
 	}
 
-	messageLength := binary.BigEndian.Uint32(messageLengthBytes)
-
-	if messageLength > 1 * 1024 * 1024 {
-		return 0, nil, errors.New("message too large: " + string(messageLength))
+	messageBytes = make([]byte, messageLength)
+	if _, err := io.ReadFull(messenger.stream, messageBytes); err != nil {
+		return 0, nil, err
 	}
 
-	messageBytes := make([]byte, messageLength)
-	read, err := reader.Read(messageBytes)
-	if err != nil {
-		panic(err)
-	}
+	messageType := messageType(messageTypeBytes[0])
 
-	if read != int(messageLength) {
-		panic(errors.New("invalid message len"))
-	}
-
-	messageType := messageType(messageTypeByte)
+	var message proto.Message
 
 	switch messageType {
 	case messageTypeRegisterRequest:
-		return recvread(messageBytes, messageType, &RegisterRequest{})
+		message = &RegisterRequest{}
 	case messageTypeRegisterResponse:
-		return recvread(messageBytes, messageType, &RegisterResponse{})
+		message = &RegisterResponse{}
 	case messageTypeForwardRequest:
-		return recvread(messageBytes, messageType, &ForwardRequest{})
+		message = &ForwardRequest{}
 	case messageTypeForwardResponse:
-		return recvread(messageBytes, messageType, &ForwardResponse{})
+		message = &ForwardResponse{}
 	default:
-		panic(errors.New("Unknown message"))
+		return 0, nil, errors.New("Unknown message")
 	}
-}
 
-func (messenger *messenger) close() {
-	messenger.stream.Close()
-}
-
-func recvread(messageBytes []byte, msgType messageType, message proto.Message) (messageType, proto.Message, error) {
 	err := proto.Unmarshal(messageBytes, message)
 	if err != nil {
 		return 0, nil, err
 	}
 
-	log.Println("<- [" + messageTypes[msgType] + "] " + message.(proto.Message).String())
-	return msgType, message, nil
+	log.Println("<- [" + messageTypes[messageType] + "] " + message.(proto.Message).String())
+	return messageType, message, nil
+}
+
+func (messenger *messenger) close() {
+	messenger.stream.Close()
 }
 
 // Setup a bare-bones TLS config for the server

@@ -6,29 +6,32 @@ import (
 	"github.com/lucas-clemente/quic-go/qerr"
 	"log"
 	"net"
+	"sync"
 )
 
-type client struct {
+type conn struct {
 	addr   *net.UDPAddr
 	messenger *messenger
 }
 
 type fwd struct {
-	sourceConn *client
-	targetConn *client
+	source *conn
+	target *conn
 }
 
-func NewServer() *server {
-	return &server{}
-}
-
-type server struct {
-	clients  map[string]*client
+type broker struct {
+	clients  map[string]*conn
 	forwards map[string]*fwd
+
+	sync.RWMutex
 }
 
-func (s *server) Start(listenAddr string) {
-	s.clients = make(map[string]*client)
+func NewBroker() *broker {
+	return &broker{}
+}
+
+func (s *broker) ListenAndServe(listenAddr string) {
+	s.clients = make(map[string]*conn)
 	s.forwards = make(map[string]*fwd)
 
 	listener, err := quic.ListenAddr(listenAddr, generateTlsConfig(), generateQuicConfig()) // TODO fix this
@@ -48,7 +51,7 @@ func (s *server) Start(listenAddr string) {
 	}
 }
 
-func (s *server) handleSession(session quic.Session) {
+func (s *broker) handleSession(session quic.Session) {
 	for {
 		stream, err := session.AcceptStream()
 		if err != nil {
@@ -62,7 +65,7 @@ func (s *server) handleSession(session quic.Session) {
 	}
 }
 
-func (s *server) handleStream(session quic.Session, messenger *messenger) {
+func (s *broker) handleStream(session quic.Session, messenger *messenger) {
 	addr := session.RemoteAddr()
 
 	for {
@@ -87,9 +90,9 @@ func (s *server) handleStream(session quic.Session, messenger *messenger) {
 
 			log.Println("Client", request.Source, "with address", remoteAddr, "connected")
 
-			s.clients[request.Source] = &client{
+			s.clients[request.Source] = &conn{
 				messenger: messenger,
-				addr:   udpAddr,
+				addr:      udpAddr,
 			}
 
 			log.Println("Control table:")
@@ -103,19 +106,22 @@ func (s *server) handleStream(session quic.Session, messenger *messenger) {
 
 			if _, ok := s.clients[request.Target]; !ok {
 				messenger.send(messageTypeForwardResponse, &ForwardResponse{
-					Id: request.Id,
+					Id:      request.Id,
 					Success: false,
 				})
 			} else {
 				target := s.clients[request.Target]
 
 				forward := &fwd{
-					sourceConn: &client{addr: udpAddr, messenger: messenger},
-					targetConn: nil,
+					source: &conn{addr: udpAddr, messenger: messenger},
+					target: nil,
 				}
 
 				log.Printf("Adding new connection %s\n", request.Id)
+
+				s.Lock()
 				s.forwards[request.Id] = forward
+				s.Unlock()
 
 				target.messenger.send(messageTypeForwardRequest, &ForwardRequest{
 					Id:                request.Id,
@@ -129,11 +135,14 @@ func (s *server) handleStream(session quic.Session, messenger *messenger) {
 		case messageTypeForwardResponse:
 			response, _ := message.(*ForwardResponse)
 
-			if _, ok := s.forwards[response.Id]; !ok {
+			s.RLock()
+			fwd, ok := s.forwards[response.Id]
+			s.RUnlock()
+
+			if !ok {
 				log.Println("Cannot forward response")
 			} else {
-				fwd := s.forwards[response.Id]
-				source := fwd.sourceConn
+				source := fwd.source
 				source.messenger.send(messageTypeForwardResponse, response)
 			}
 		}

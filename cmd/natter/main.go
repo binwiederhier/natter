@@ -30,7 +30,7 @@ func runClient(configFlag *string, nameFlag *string, brokerFlag *string, listenF
 
 	// Process -listen flag
 	if *listenFlag {
-		err := client.Listen()
+		err := client.ListenIncoming()
 		if err != nil {
 			fail(err)
 		}
@@ -125,8 +125,8 @@ func runServer() {
 
 	listenAddr := flag.Arg(0)
 
-	server := natter.NewServer()
-	server.Start(listenAddr)
+	server := natter.NewBroker()
+	server.ListenAndServe(listenAddr)
 }
 
 func syntax() {
