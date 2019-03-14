@@ -24,14 +24,15 @@ func startBroker() {
 func startAlice() {
 	alice, _ := natter.NewClient(&natter.ClientConfig{ClientUser: "alice", BrokerAddr: "localhost:5000"})
 	alice.Forward(":6000", "bob", ":7000")
-	alice.Forward(":6001", "bob", ":7000")
+	alice.Forward(":6001", "bob", ":7001")
 
-	go startAlicesEchoClient("localhost:6000", "Young Alice ", 500)
-	go startAlicesEchoClient("localhost:6001", "Old Alice", 600)
+	go startAlicesEchoClient("localhost:6000", "Alice Zero", 500)
+	go startAlicesEchoClient("localhost:6001", "Alice One", 600)
 }
 
 func startBob() {
-	go startBobsEchoServer()
+	go startBobsEchoServer(":7000")
+	go startBobsEchoServer(":7001")
 
 	bob, _ := natter.NewClient(&natter.ClientConfig{ClientUser: "bob", BrokerAddr: "localhost:5000"})
 	bob.ListenIncoming()
@@ -48,24 +49,25 @@ func startAlicesEchoClient(server string, name string, wait int) {
 	conn.Close()
 }
 
-func startBobsEchoServer() {
-	listen, err := net.Listen("tcp", ":7000")
+func startBobsEchoServer(listenAddr string) {
+	listen, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		panic(err)
 	}
 
 	for {
 		conn, _ := listen.Accept()
-		go io.Copy(loggingWriter{conn.RemoteAddr().String(), conn}, conn)
+		go io.Copy(loggingWriter{listenAddr, conn.RemoteAddr().String(), conn}, conn)
 	}
 }
 
 type loggingWriter struct {
+	listenAddr string
 	remoteAddr string
 	io.Writer
 }
 
 func (w loggingWriter) Write(b []byte) (int, error) {
-	fmt.Printf("Server: Got '%s' from '%s'\n", string(b), w.remoteAddr)
+	fmt.Printf("Server [%s]: Got '%s' from '%s'\n", w.listenAddr, string(b), w.remoteAddr)
 	return w.Writer.Write(b)
 }

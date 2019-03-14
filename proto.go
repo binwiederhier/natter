@@ -40,13 +40,13 @@ type messenger struct {
 	receivemu sync.Mutex
 }
 
-func (messenger *messenger) send(messageType messageType, message proto.Message) {
+func (messenger *messenger) send(messageType messageType, message proto.Message) error {
 	messenger.sendmu.Lock()
 	defer messenger.sendmu.Unlock()
 
 	messageBytes, err := proto.Marshal(message)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	messageTypeBytes := []byte{byte(messageType)}
@@ -60,10 +60,11 @@ func (messenger *messenger) send(messageType messageType, message proto.Message)
 
 	_, err = messenger.stream.Write(send)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	log.Println("-> [" + messageTypes[messageType] + "] " + message.(proto.Message).String())
+	return nil
 }
 
 func (messenger *messenger) receive() (messageType, proto.Message, error) {
@@ -120,8 +121,8 @@ func (messenger *messenger) receive() (messageType, proto.Message, error) {
 	return messageType, message, nil
 }
 
-func (messenger *messenger) close() {
-	messenger.stream.Close()
+func (messenger *messenger) close() error {
+	return messenger.stream.Close()
 }
 
 // Setup a bare-bones TLS config for the server

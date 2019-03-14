@@ -20,11 +20,10 @@ type Client struct {
 	config           *ClientConfig
 	brokerAddr       *net.UDPAddr
 	brokerMessenger  *messenger
+	brokerMutex      sync.RWMutex
 	udpConn          net.PacketConn
 	forwards         map[string]*forward
-	forwardsAddrToId map[string]string
-
-	sync.RWMutex
+	forwardsMutex    sync.RWMutex
 }
 
 type forward struct {
@@ -76,7 +75,6 @@ func NewClient(config *ClientConfig) (*Client, error) {
 		brokerMessenger:  nil,
 		udpConn:          nil,
 		forwards:         make(map[string]*forward),
-		forwardsAddrToId: make(map[string]string),
 	}, nil
 }
 
@@ -137,8 +135,8 @@ func (client *Client) Forward(localAddr string, target string, targetForwardAddr
 		targetForwardAddr: targetForwardAddr,
 	}
 
-	client.Lock()
-	defer client.Unlock()
+	client.forwardsMutex.Lock()
+	defer client.forwardsMutex.Unlock()
 
 	client.forwards[forward.id] = forward
 
@@ -153,12 +151,15 @@ func (client *Client) Forward(localAddr string, target string, targetForwardAddr
 
 	// Sending forward request
 	log.Printf("Requesting connection to target %s on TCP address %s\n", target, targetForwardAddr)
-	client.brokerMessenger.send(messageTypeForwardRequest, &ForwardRequest{
+	err = client.brokerMessenger.send(messageTypeForwardRequest, &ForwardRequest{
 		Id:                forward.id,
 		Source:            forward.source,
 		Target:            forward.target,
 		TargetForwardAddr: forward.targetForwardAddr,
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	return forward, nil
 }
@@ -172,8 +173,8 @@ func (client *Client) createRandomString(n int) string {
 }
 
 func (client *Client) connectToServer() error {
-	client.Lock()
-	defer client.Unlock()
+	client.brokerMutex.Lock()
+	defer client.brokerMutex.Unlock()
 
 	var err error
 
@@ -261,8 +262,8 @@ func (client *Client) openPeerStream(forward *forward, conn net.Conn) {
 
 	for {
 		peerUdpAddr := forward.PeerUdpAddr()
-		peerHost := fmt.Sprintf("%s:%d", peerUdpAddr.IP.String(), peerUdpAddr.Port)
-		session, err := quic.Dial(client.udpConn, peerUdpAddr, peerHost, generateQuicTlsClientConfig(),
+		sniHost := fmt.Sprintf("%s:%d", forward.id, 2586) // Connection ID in the SNI host, port doesn't matter!
+		session, err := quic.Dial(client.udpConn, peerUdpAddr, sniHost, generateQuicTlsClientConfig(),
 			generateQuicConfig()) // TODO fix this
 
 		if err != nil {
@@ -300,7 +301,7 @@ func (client *Client) handleForwardRequest(request *ForwardRequest) {
 	if err != nil {
 		log.Println("Cannot resolve peer udp addr: " + err.Error())
 		client.brokerMessenger.send(messageTypeForwardResponse, &ForwardResponse{Success: false})
-		return
+		return // TODO close forward
 	}
 
 	forward := &forward{
@@ -312,13 +313,12 @@ func (client *Client) handleForwardRequest(request *ForwardRequest) {
 		peerUdpAddr: peerUdpAddr,
 	}
 
-	client.Lock()
-	defer client.Unlock()
+	client.forwardsMutex.Lock()
+	defer client.forwardsMutex.Unlock()
 
 	client.forwards[request.Id] = forward
-	client.forwardsAddrToId[peerUdpAddr.String()] = request.Id
 
-	client.brokerMessenger.send(messageTypeForwardResponse, &ForwardResponse{
+	err = client.brokerMessenger.send(messageTypeForwardResponse, &ForwardResponse{
 		Id:         request.Id,
 		Success:    true,
 		Source:     request.Source,
@@ -326,13 +326,17 @@ func (client *Client) handleForwardRequest(request *ForwardRequest) {
 		Target:     request.Target,
 		TargetAddr: request.TargetAddr,
 	})
+	if err != nil {
+		log.Println("Cannot send forward response: " + err.Error())
+		return // TODO close forward
+	}
 
 	go client.punch(peerUdpAddr)
 }
 
 func (client *Client) handleForwardResponse(response *ForwardResponse) {
-	client.Lock()
-	defer client.Unlock()
+	client.forwardsMutex.Lock()
+	defer client.forwardsMutex.Unlock()
 
 	forward, ok := client.forwards[response.Id]
 
@@ -381,27 +385,21 @@ func (client *Client) checkin() {
 func (client *Client) handlePeerSession(session quic.Session) {
 	log.Println("Session from " + session.RemoteAddr().String() + " accepted.")
 	peerAddr := session.RemoteAddr().(*net.UDPAddr)
+	connectionId := session.ConnectionState().ServerName // Connection ID is the SNI host!
 
-	client.Lock()
-	connectionId, ok := client.forwardsAddrToId[peerAddr.String()]
-	if !ok {
-		log.Printf("Session from unexpected client %s. Closing.", peerAddr.String())
-		session.Close()
-		client.Unlock()
-		return
-	}
+	client.forwardsMutex.Lock()
 
 	forward, ok := client.forwards[connectionId]
 	if !ok {
 		log.Printf("Cannot find forward for connection ID %s. Closing.", connectionId)
 		session.Close()
-		client.Unlock()
+		client.forwardsMutex.Unlock()
 		return
 	}
 
 	targetForwardAddr := forward.targetForwardAddr
 	log.Println("Client accepted from " + peerAddr.String() + ", forward found to " + targetForwardAddr)
-	client.Unlock()
+	client.forwardsMutex.Unlock()
 
 	for {
 		stream, err := session.AcceptStream()
