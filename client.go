@@ -12,6 +12,7 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
@@ -49,7 +50,9 @@ type ClientConfig struct {
 	BrokerAddr string
 }
 
-const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+const (
+	letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+)
 
 // NewClient creates a new client struct. It checks the configuration
 // passed and returns an error if it is invalid.
@@ -141,13 +144,27 @@ func (client *Client) Forward(localAddr string, target string, targetForwardAddr
 	client.forwards[forward.id] = forward
 
 	// Listen to local TCP address
-	log.Printf("Listening on local TCP address %s\n", localAddr)
-	localTcpListener, err := net.Listen("tcp", localAddr)
-	if err != nil {
-		return nil, err
-	}
+	if localAddr == ":" || localAddr == "" {
+		log.Println("Reading from STDIN")
 
-	go client.listenTcp(forward, localTcpListener)
+		rw := struct {
+			io.Reader
+			io.Writer
+		} {
+			os.Stdin,
+			os.Stdout,
+		}
+
+		go client.openPeerStream(forward, rw)
+	} else {
+		log.Printf("Listening on local TCP address %s\n", localAddr)
+		localTcpListener, err := net.Listen("tcp", localAddr)
+		if err != nil {
+			return nil, err
+		}
+
+		go client.listenTcp(forward, localTcpListener)
+	}
 
 	// Sending forward request
 	log.Printf("Requesting connection to target %s on TCP address %s\n", target, targetForwardAddr)
@@ -249,7 +266,7 @@ func (client *Client) listenTcp(forward *forward, listener net.Listener) {
 	}
 }
 
-func (client *Client) openPeerStream(forward *forward, conn net.Conn) {
+func (client *Client) openPeerStream(forward *forward, localStream io.ReadWriter) {
 	log.Print("Opening stream to peer")
 
 	var peerStream quic.Stream
@@ -284,8 +301,8 @@ func (client *Client) openPeerStream(forward *forward, conn net.Conn) {
 
 	log.Println("Connected. Starting to forward.")
 
-	go func() { io.Copy(peerStream, conn) }()
-	go func() { io.Copy(conn, peerStream) }()
+	go func() { io.Copy(peerStream, localStream) }()
+	go func() { io.Copy(localStream, peerStream) }()
 }
 
 func (client *Client) handleRegisterResponse(response *RegisterResponse) {
