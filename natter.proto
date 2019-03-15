@@ -2,12 +2,12 @@ syntax = "proto3";
 package natter;
 
 // 0x01
-message RegisterRequest {
+message CheckinRequest {
     string Source = 1;
 }
 
 // 0x02
-message RegisterResponse {
+message CheckinResponse {
     string Addr = 1;
 }
 
@@ -19,6 +19,7 @@ message ForwardRequest {
     string Target = 4;
     string TargetAddr = 5;
     string TargetForwardAddr = 6;
+    string TargetCommand = 7;
 }
 
 // 0x04
@@ -29,4 +30,5 @@ message ForwardResponse {
     string SourceAddr = 4;
     string Target = 5;
     string TargetAddr = 6;
+    string TargetCommand = 7;
 }

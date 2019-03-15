@@ -19,16 +19,16 @@ import (
 type messageType byte
 
 const (
-	messageTypeRegisterRequest  = messageType(0x01)
-	messageTypeRegisterResponse = messageType(0x02)
+	messageTypeCheckinRequest  = messageType(0x01)
+	messageTypeCheckinResponse = messageType(0x02)
 
 	messageTypeForwardRequest  = messageType(0x03)
 	messageTypeForwardResponse = messageType(0x04)
 )
 
 var messageTypes = map[messageType]string{
-	messageTypeRegisterRequest:  "RegisterRequest",
-	messageTypeRegisterResponse: "RegisterResponse",
+	messageTypeCheckinRequest:  "CheckinRequest",
+	messageTypeCheckinResponse: "CheckinResponse",
 
 	messageTypeForwardRequest:  "ForwardRequest",
 	messageTypeForwardResponse: "ForwardResponse",
@@ -100,10 +100,10 @@ func (messenger *messenger) receive() (messageType, proto.Message, error) {
 	var message proto.Message
 
 	switch messageType {
-	case messageTypeRegisterRequest:
-		message = &RegisterRequest{}
-	case messageTypeRegisterResponse:
-		message = &RegisterResponse{}
+	case messageTypeCheckinRequest:
+		message = &CheckinRequest{}
+	case messageTypeCheckinResponse:
+		message = &CheckinResponse{}
 	case messageTypeForwardRequest:
 		message = &ForwardRequest{}
 	case messageTypeForwardResponse:

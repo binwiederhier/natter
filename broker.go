@@ -84,8 +84,8 @@ func (s *broker) handleStream(session quic.Session, messenger *messenger) {
 		}
 
 		switch messageType {
-		case messageTypeRegisterRequest:
-			request, _ := message.(*RegisterRequest)
+		case messageTypeCheckinRequest:
+			request, _ := message.(*CheckinRequest)
 			remoteAddr := fmt.Sprintf("%s:%d", udpAddr.IP, udpAddr.Port)
 
 			log.Println("Client", request.Source, "with address", remoteAddr, "connected")
@@ -100,7 +100,7 @@ func (s *broker) handleStream(session quic.Session, messenger *messenger) {
 				log.Println("-", client, conn.addr)
 			}
 
-			messenger.send(messageTypeRegisterResponse, &RegisterResponse{Addr: remoteAddr})
+			messenger.send(messageTypeCheckinResponse, &CheckinResponse{Addr: remoteAddr})
 		case messageTypeForwardRequest:
 			request, _ := message.(*ForwardRequest)
 

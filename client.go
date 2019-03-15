@@ -1,6 +1,5 @@
 package natter
 
-// TODO allow forwarding from STDIN
 // TODO allow forwarding to remote command
 
 import (
@@ -242,8 +241,8 @@ func (client *Client) listenBrokerMessages() {
 		}
 
 		switch messageType {
-		case messageTypeRegisterResponse:
-			client.handleRegisterResponse(message.(*RegisterResponse))
+		case messageTypeCheckinResponse:
+			client.handleCheckinResponse(message.(*CheckinResponse))
 		case messageTypeForwardRequest:
 			client.handleForwardRequest(message.(*ForwardRequest))
 		case messageTypeForwardResponse:
@@ -305,7 +304,7 @@ func (client *Client) openPeerStream(forward *forward, localStream io.ReadWriter
 	go func() { io.Copy(localStream, peerStream) }()
 }
 
-func (client *Client) handleRegisterResponse(response *RegisterResponse) {
+func (client *Client) handleCheckinResponse(response *CheckinResponse) {
 	// Nothing.
 }
 
@@ -394,7 +393,7 @@ func (client *Client) checkin() {
 	// TODO add doneChan support
 
 	for {
-		client.brokerMessenger.send(messageTypeRegisterRequest, &RegisterRequest{Source: client.config.ClientUser})
+		client.brokerMessenger.send(messageTypeCheckinRequest, &CheckinRequest{Source: client.config.ClientUser})
 		time.Sleep(15 * time.Second)
 	}
 }
