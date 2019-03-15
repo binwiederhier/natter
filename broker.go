@@ -130,6 +130,7 @@ func (s *broker) handleStream(session quic.Session, messenger *messenger) {
 					Target:            request.Target,
 					TargetAddr:        fmt.Sprintf("%s:%d", target.addr.IP, target.addr.Port),
 					TargetForwardAddr: request.TargetForwardAddr,
+					TargetCommand:     request.TargetCommand,
 				})
 			}
 		case messageTypeForwardResponse:

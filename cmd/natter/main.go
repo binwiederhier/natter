@@ -1,12 +1,16 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"heckel.io/natter"
 	"os"
 	"strings"
 )
+
+// TODO Close connection when remote command/port closes
+// TODO properly close goroutines/forwards
 
 func main() {
 	serverFlag := flag.Bool("server", false, "Run in server mode")
@@ -36,34 +40,82 @@ func runClient(configFlag *string, nameFlag *string, brokerFlag *string, listenF
 		}
 	}
 
-	// Process forward specs
+	// Read forward specs and command
+	var targetCommandStartIndex int
+	var targetCommand []string
+	var specs []string
+
 	for i := 0; i < flag.NArg(); i++ {
 		spec := strings.Split(flag.Arg(i), ":")
+		if len(spec) != 3 && len(spec) != 4 {
+			targetCommandStartIndex = i
+			break
+		}
+	}
+
+	if targetCommandStartIndex == 0 {
+		specs = flag.Args()
+		targetCommand = make([]string, 0)
+	} else {
+		specs = flag.Args()[:targetCommandStartIndex]
+		targetCommand = flag.Args()[targetCommandStartIndex:]
+	}
+
+	if !*listenFlag && len(specs) == 0 {
+		fail(errors.New("either specify the -listen flag or at least one forward spec"))
+		syntax()
+	}
+
+	// Process forward specs
+	for _, s := range specs {
+		spec := strings.Split(s, ":")
+
+		var (
+			sourceAddr string
+			target string
+			targetForwardAddr string
+		)
 
 		if len(spec) == 3 {
-			sourceAddr := ":" + spec[0]
-			target := spec[1]
-			targetForwardAddr := ":" + spec[2]
+			sourceAddr = spec[0]
+			target = spec[1]
 
-			_, err := client.Forward(sourceAddr, target, targetForwardAddr)
-			if err != nil {
-				fail(err)
+			if spec[2] == "" {
+				targetForwardAddr = ""
+
+				if len(targetCommand) == 0 {
+					fail(errors.New("Invalid spec " + s + ", no command specified"))
+				}
+			} else {
+				targetForwardAddr = ":" + spec[2]
 			}
 		} else if len(spec) == 4 {
-			sourceAddr := ":" + spec[0]
-			target := spec[1]
-			targetForwardAddr := spec[2] + ":" + spec[3]
+			sourceAddr = spec[0]
+			target = spec[1]
+			targetForwardAddr = spec[2] + ":" + spec[3]
+		}
 
-			_, err := client.Forward(sourceAddr, target, targetForwardAddr)
-			if err != nil {
-				fail(err)
-			}
-		} else {
-			syntax()
+		if sourceAddr != "" {
+			sourceAddr = ":" + sourceAddr
+		}
+
+		_, err := client.Forward(sourceAddr, target, targetForwardAddr, targetCommand)
+		if err != nil {
+			fail(err)
 		}
 	}
 
 	select { }
+}
+
+func parseSpec(spec []string) (sourceAddr string, target string, targetHost string, targetPort string) {
+	if len(spec) == 3 {
+		return spec[0], spec[1], "", spec[2]
+	} else if len(spec) == 4 {
+		return spec[0], spec[1], spec[2], spec[3]
+	}
+
+	return "", "", "", ""
 }
 
 func loadConfig(configFlag *string, nameFlag *string, brokerFlag *string) *natter.ClientConfig {
@@ -134,7 +186,7 @@ func syntax() {
 	fmt.Println("  natter -server :PORT")
 	fmt.Println("    Start the rendevous server on PORT for new client connections")
 	fmt.Println()
-	fmt.Println("  natter [-config CONFIG] [-name CLIENTNAME] [-broker BROKER] [-listen] FORWARDSPEC ...")
+	fmt.Println("  natter [-config CONFIG] [-name CLIENTNAME] [-broker BROKER] [-listen] [FORWARDSPEC ...] [COMMAND]")
 	fmt.Println("    Start client side daemon to listen for incoming forwards")
 	fmt.Println()
 	fmt.Println("  Forward spec:")
@@ -143,14 +195,18 @@ func syntax() {
 	fmt.Println()
 	fmt.Println("    LOCALPORT:TARGET:TARGETPORT           - Forward local TCP port to target TCP port")
 	fmt.Println("    LOCALPORT:TARGET:OTHERHOST:OTHERPORT  - Forward local TCP port to another host on target's network")
+	fmt.Println("    LOCALPORT:TARGET: COMMAND             - Forward local TCP port to target command")
 	fmt.Println("    :TARGET:TARGETPORT                    - Forward STDIN to target TCP port")
 	fmt.Println()
-	fmt.Println("Example:")
+	fmt.Println("Examples:")
 	fmt.Println("  natter -config alice.conf 8022:bob:22")
 	fmt.Println("    Forward local TCP port 8022 to bob's TCP port 22")
 	fmt.Println()
 	fmt.Println("  natter -config alice.conf -listen 8022:bob:10.0.1.1:22")
 	fmt.Println("    Forward local TCP port 8022 to TCP address 10.0.1.1:22 in bob's network,")
 	fmt.Println("    and also listen for incoming forwards")
+	fmt.Println()
+	fmt.Println("  natter -name alice -broker example.com:1337 :bob: sh -c 'cat > file.txt'")
+	fmt.Println("    Forward local STDIN to remote command")
 	os.Exit(1)
 }

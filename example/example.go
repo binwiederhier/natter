@@ -23,8 +23,8 @@ func startBroker() {
 
 func startAlice() {
 	alice, _ := natter.NewClient(&natter.ClientConfig{ClientUser: "alice", BrokerAddr: "localhost:5000"})
-	alice.Forward(":6000", "bob", ":7000")
-	alice.Forward(":6001", "bob", ":7001")
+	alice.Forward(":6000", "bob", ":7000", nil)
+	alice.Forward(":6001", "bob", ":7001", nil)
 
 	go startAlicesEchoClient("localhost:6000", "Alice Zero", 500)
 	go startAlicesEchoClient("localhost:6001", "Alice One", 600)

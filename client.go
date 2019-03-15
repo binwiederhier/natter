@@ -1,7 +1,5 @@
 package natter
 
-// TODO allow forwarding to remote command
-
 import (
 	"errors"
 	"fmt"
@@ -12,6 +10,8 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -34,6 +34,7 @@ type forward struct {
 	sourceAddr        string
 	target            string
 	targetForwardAddr string
+	targetCommand     []string
 
 	sync.RWMutex
 }
@@ -119,7 +120,7 @@ func (client *Client) ListenIncoming() error {
 	return nil
 }
 
-func (client *Client) Forward(localAddr string, target string, targetForwardAddr string) (*forward, error) {
+func (client *Client) Forward(localAddr string, target string, targetForwardAddr string, targetCommand []string) (*forward, error) {
 	log.Printf("Adding forward from local address %s to %s %s\n", localAddr, target, targetForwardAddr)
 
 	err := client.connectToServer()
@@ -135,6 +136,7 @@ func (client *Client) Forward(localAddr string, target string, targetForwardAddr
 		sourceAddr: localAddr,
 		target: target,
 		targetForwardAddr: targetForwardAddr,
+		targetCommand: targetCommand,
 	}
 
 	client.forwardsMutex.Lock()
@@ -172,6 +174,7 @@ func (client *Client) Forward(localAddr string, target string, targetForwardAddr
 		Source:            forward.source,
 		Target:            forward.target,
 		TargetForwardAddr: forward.targetForwardAddr,
+		TargetCommand:     forward.targetCommand,
 	})
 	if err != nil {
 		return nil, err
@@ -326,6 +329,7 @@ func (client *Client) handleForwardRequest(request *ForwardRequest) {
 		sourceAddr: request.SourceAddr,
 		target: request.Target,
 		targetForwardAddr: request.TargetForwardAddr,
+		targetCommand: request.TargetCommand,
 		peerUdpAddr: peerUdpAddr,
 	}
 
@@ -414,7 +418,14 @@ func (client *Client) handlePeerSession(session quic.Session) {
 	}
 
 	targetForwardAddr := forward.targetForwardAddr
-	log.Println("Client accepted from " + peerAddr.String() + ", forward found to " + targetForwardAddr)
+	targetCommand := forward.targetCommand
+
+	if targetCommand != nil && len(targetCommand) > 0 {
+		log.Println("Client accepted from " + peerAddr.String() + ", forward found to command " + strings.Join(forward.targetCommand, " "))
+	} else {
+		log.Println("Client accepted from " + peerAddr.String() + ", forward found to " + targetForwardAddr)
+	}
+
 	client.forwardsMutex.Unlock()
 
 	for {
@@ -425,7 +436,7 @@ func (client *Client) handlePeerSession(session quic.Session) {
 			break
 		}
 
-		go client.handlePeerStream(session, stream, targetForwardAddr)
+		go client.handlePeerStream(session, stream, targetForwardAddr, targetCommand)
 	}
 }
 
@@ -443,15 +454,40 @@ func (client *Client) listenPeers(listener quic.Listener) {
 	}
 }
 
-func (client *Client) handlePeerStream(session quic.Session, stream quic.Stream, targetForwardAddr string) {
+func (client *Client) handlePeerStream(session quic.Session, stream quic.Stream, targetForwardAddr string, targetCommand []string) {
 	log.Printf("Stream %d accepted. Starting to forward.\n", stream.StreamID())
 
-	forwardConn, err := net.Dial("tcp", targetForwardAddr)
-	if err != nil {
-		log.Printf("Cannot open connection to %s: %s\n", targetForwardAddr, err.Error())
-		return // TODO close forward
-	}
+	if targetCommand != nil && len(targetCommand) > 0 {
+		cmd := exec.Command(targetCommand[0], targetCommand[1:]...)
 
-	go func() { io.Copy(stream, forwardConn) }()
-	go func() { io.Copy(forwardConn, stream) }()
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			log.Println(err.Error())
+			return // TODO close forward
+		}
+
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			log.Println(err.Error())
+			return // TODO close forward
+		}
+
+		err = cmd.Start()
+		if err != nil {
+			log.Println(err.Error())
+			return // TODO close forward
+		}
+
+		go func() { io.Copy(stream, stdout) }()
+		go func() { io.Copy(stdin, stream) }()
+	} else {
+		forwardStream, err := net.Dial("tcp", targetForwardAddr)
+		if err != nil {
+			log.Printf("Cannot open connection to %s: %s\n", targetForwardAddr, err.Error())
+			return // TODO close forward
+		}
+
+		go func() { io.Copy(stream, forwardStream) }()
+		go func() { io.Copy(forwardStream, stream) }()
+	}
 }

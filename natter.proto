@@ -19,7 +19,7 @@ message ForwardRequest {
     string Target = 4;
     string TargetAddr = 5;
     string TargetForwardAddr = 6;
-    string TargetCommand = 7;
+    repeated string TargetCommand = 7;
 }
 
 // 0x04
@@ -30,5 +30,4 @@ message ForwardResponse {
     string SourceAddr = 4;
     string Target = 5;
     string TargetAddr = 6;
-    string TargetCommand = 7;
 }
