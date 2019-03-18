@@ -7,7 +7,7 @@ clean:
 
 proto:
 	@echo == Generating protobuf code ==
-	protoc --go_out=internal internal/*.proto
+	protoc --go_out=. internal/*.proto
 	@echo
 
 cmd: proto
