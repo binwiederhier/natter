@@ -14,6 +14,7 @@ import (
 	"log"
 	"math/big"
 	"sync"
+	"time"
 )
 
 type messageType byte
@@ -34,15 +35,15 @@ var messageTypes = map[messageType]string{
 	messageTypeForwardResponse: "ForwardResponse",
 }
 
-type messenger struct {
+type protocol struct {
 	stream quic.Stream
 	sendmu sync.Mutex
 	receivemu sync.Mutex
 }
 
-func (messenger *messenger) send(messageType messageType, message proto.Message) error {
-	messenger.sendmu.Lock()
-	defer messenger.sendmu.Unlock()
+func (p *protocol) send(messageType messageType, message proto.Message) error {
+	p.sendmu.Lock()
+	defer p.sendmu.Unlock()
 
 	messageBytes, err := proto.Marshal(message)
 	if err != nil {
@@ -58,7 +59,7 @@ func (messenger *messenger) send(messageType messageType, message proto.Message)
 	send = append(send, messageLengthBytes[:]...)
 	send = append(send, messageBytes[:]...)
 
-	_, err = messenger.stream.Write(send)
+	_, err = p.stream.Write(send)
 	if err != nil {
 		return err
 	}
@@ -67,9 +68,9 @@ func (messenger *messenger) send(messageType messageType, message proto.Message)
 	return nil
 }
 
-func (messenger *messenger) receive() (messageType, proto.Message, error) {
-	messenger.receivemu.Lock()
-	defer messenger.receivemu.Unlock()
+func (p *protocol) receive() (messageType, proto.Message, error) {
+	p.receivemu.Lock()
+	defer p.receivemu.Unlock()
 
 	var (
 		messageTypeBytes = make([]byte, 1)
@@ -78,11 +79,11 @@ func (messenger *messenger) receive() (messageType, proto.Message, error) {
 		messageBytes []byte
 	)
 
-	if _, err := io.ReadFull(messenger.stream, messageTypeBytes); err != nil {
+	if _, err := io.ReadFull(p.stream, messageTypeBytes); err != nil {
 		return 0, nil, err
 	}
 
-	if _, err := io.ReadFull(messenger.stream, messageLengthBytes); err != nil {
+	if _, err := io.ReadFull(p.stream, messageLengthBytes); err != nil {
 		return 0, nil, err
 	}
 
@@ -91,7 +92,7 @@ func (messenger *messenger) receive() (messageType, proto.Message, error) {
 	}
 
 	messageBytes = make([]byte, messageLength)
-	if _, err := io.ReadFull(messenger.stream, messageBytes); err != nil {
+	if _, err := io.ReadFull(p.stream, messageBytes); err != nil {
 		return 0, nil, err
 	}
 
@@ -121,8 +122,8 @@ func (messenger *messenger) receive() (messageType, proto.Message, error) {
 	return messageType, message, nil
 }
 
-func (messenger *messenger) close() error {
-	return messenger.stream.Close()
+func (p *protocol) close() error {
+	return p.stream.Close()
 }
 
 // Setup a bare-bones TLS config for the server
@@ -147,7 +148,9 @@ func generateTlsConfig() *tls.Config {
 }
 
 func generateQuicTlsClientConfig() *tls.Config {
-	return &tls.Config{InsecureSkipVerify: true}
+	return &tls.Config{
+		InsecureSkipVerify: true,
+	}
 }
 
 func generateQuicConfig() *quic.Config {
@@ -155,5 +158,7 @@ func generateQuicConfig() *quic.Config {
 		KeepAlive:          true,
 		ConnectionIDLength: 8,
 		Versions: []quic.VersionNumber{quic.VersionGQUIC43},
+		IdleTimeout: 5 * time.Second,
+		HandshakeTimeout: 5 * time.Second,
 	}
 }

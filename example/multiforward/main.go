@@ -35,7 +35,7 @@ func startBob() {
 	go startBobsEchoServer(":7001")
 
 	bob, _ := natter.NewClient(&natter.ClientConfig{ClientUser: "bob", BrokerAddr: "localhost:5000"})
-	bob.ListenIncoming()
+	bob.Listen()
 }
 
 func startAlicesEchoClient(server string, name string, wait int) {

@@ -9,37 +9,39 @@ import (
 	"sync"
 )
 
-type conn struct {
-	addr   *net.UDPAddr
-	messenger *messenger
-}
-
-type fwd struct {
-	source *conn
-	target *conn
-}
-
 type broker struct {
-	clients  map[string]*conn
-	forwards map[string]*fwd
+	clients  map[string]*brokerClient
+	forwards map[string]*brokerForward
 
-	sync.RWMutex
+	mutex sync.RWMutex
+}
+
+type brokerClient struct {
+	session quic.Session
+	proto   *protocol
+	addr    *net.UDPAddr
+}
+
+type brokerForward struct {
+	source *brokerClient
+	target *brokerClient
 }
 
 func NewBroker() *broker {
 	return &broker{}
 }
 
-func (s *broker) ListenAndServe(listenAddr string) {
-	s.clients = make(map[string]*conn)
-	s.forwards = make(map[string]*fwd)
+func (b *broker) ListenAndServe(listenAddr string) error {
+	b.clients = make(map[string]*brokerClient)
+	b.forwards = make(map[string]*brokerForward)
 
 	listener, err := quic.ListenAddr(listenAddr, generateTlsConfig(), generateQuicConfig()) // TODO fix this
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	log.Println("Waiting for connections")
+
 	for {
 		session, err := listener.Accept()
 		if err != nil {
@@ -47,11 +49,13 @@ func (s *broker) ListenAndServe(listenAddr string) {
 			continue
 		}
 
-		go s.handleSession(session)
+		go b.handleSession(session)
 	}
+
+	return nil
 }
 
-func (s *broker) handleSession(session quic.Session) {
+func (b *broker) handleSession(session quic.Session) {
 	for {
 		stream, err := session.AcceptStream()
 		if err != nil {
@@ -60,92 +64,116 @@ func (s *broker) handleSession(session quic.Session) {
 			return
 		}
 
-		messenger := &messenger{stream: stream}
-		go s.handleStream(session, messenger)
+		client := &brokerClient{
+			addr:    session.RemoteAddr().(*net.UDPAddr),
+			session: session,
+			proto:   &protocol{stream: stream},
+		}
+
+		go b.handleClient(client)
 	}
 }
 
-func (s *broker) handleStream(session quic.Session, messenger *messenger) {
-	addr := session.RemoteAddr()
-
+func (b *broker) handleClient(client *brokerClient) {
 	for {
-		udpAddr, _ := addr.(*net.UDPAddr)
-		messageType, message, err := messenger.receive()
+		messageType, message, err := client.proto.receive()
 
 		if err != nil {
 			if quicerr, ok := err.(*qerr.QuicError); ok && quicerr.ErrorCode == qerr.NetworkIdleTimeout {
 				log.Println("Network idle timeout. Closing stream: " + err.Error())
-				messenger.close()
+				client.session.Close()
 				break
 			}
 
-			log.Println("Cannot read message: " + err.Error())
-			continue
+
+			log.Println("Cannot read message: " + err.Error() + ". Closing session.")
+			client.session.Close()
+			break
 		}
 
 		switch messageType {
 		case messageTypeCheckinRequest:
-			request, _ := message.(*CheckinRequest)
-			remoteAddr := fmt.Sprintf("%s:%d", udpAddr.IP, udpAddr.Port)
-
-			log.Println("Client", request.Source, "with address", remoteAddr, "connected")
-
-			s.clients[request.Source] = &conn{
-				messenger: messenger,
-				addr:      udpAddr,
-			}
-
-			log.Println("Control table:")
-			for client, conn := range s.clients {
-				log.Println("-", client, conn.addr)
-			}
-
-			messenger.send(messageTypeCheckinResponse, &CheckinResponse{Addr: remoteAddr})
+			b.handleCheckinRequest(client, message.(*CheckinRequest))
 		case messageTypeForwardRequest:
-			request, _ := message.(*ForwardRequest)
-
-			if _, ok := s.clients[request.Target]; !ok {
-				messenger.send(messageTypeForwardResponse, &ForwardResponse{
-					Id:      request.Id,
-					Success: false,
-				})
-			} else {
-				target := s.clients[request.Target]
-
-				forward := &fwd{
-					source: &conn{addr: udpAddr, messenger: messenger},
-					target: nil,
-				}
-
-				log.Printf("Adding new connection %s\n", request.Id)
-
-				s.Lock()
-				s.forwards[request.Id] = forward
-				s.Unlock()
-
-				target.messenger.send(messageTypeForwardRequest, &ForwardRequest{
-					Id:                request.Id,
-					Source:            request.Source,
-					SourceAddr:        fmt.Sprintf("%s:%d", udpAddr.IP, udpAddr.Port),
-					Target:            request.Target,
-					TargetAddr:        fmt.Sprintf("%s:%d", target.addr.IP, target.addr.Port),
-					TargetForwardAddr: request.TargetForwardAddr,
-					TargetCommand:     request.TargetCommand,
-				})
-			}
+			b.handleForwardRequest(client, message.(*ForwardRequest))
 		case messageTypeForwardResponse:
-			response, _ := message.(*ForwardResponse)
-
-			s.RLock()
-			fwd, ok := s.forwards[response.Id]
-			s.RUnlock()
-
-			if !ok {
-				log.Println("Cannot forward response")
-			} else {
-				source := fwd.source
-				source.messenger.send(messageTypeForwardResponse, response)
-			}
+			b.handleForwardResponse(client, message.(*ForwardResponse))
 		}
 	}
 }
+
+func (b *broker) handleCheckinRequest(client *brokerClient, request *CheckinRequest) {
+	remoteAddr := fmt.Sprintf("%s:%d", client.addr.IP, client.addr.Port)
+
+	log.Println("Client", request.Source, "with address", remoteAddr, "connected")
+
+	b.mutex.Lock()
+	b.clients[request.Source] = client
+	b.mutex.Unlock()
+
+	log.Println("Control table:")
+	for client, conn := range b.clients {
+		log.Println("-", client, conn.addr)
+	}
+
+	err := client.proto.send(messageTypeCheckinResponse, &CheckinResponse{Addr: remoteAddr})
+	if err != nil {
+		log.Println("Cannot respond to client: " + err.Error())
+	}
+}
+
+func (b *broker) handleForwardRequest(client *brokerClient, request *ForwardRequest) {
+	b.mutex.RLock()
+	target , ok := b.clients[request.Target]
+	b.mutex.RUnlock()
+
+	if !ok {
+		err := client.proto.send(messageTypeForwardResponse, &ForwardResponse{
+			Id:      request.Id,
+			Success: false,
+		})
+		if err != nil {
+			log.Printf("Failed to respond to forward request: " + err.Error())
+		}
+	} else {
+		forward := &brokerForward{
+			source: client,
+			target: nil,
+		}
+
+		log.Printf("Adding new connection %s\n", request.Id)
+
+		b.mutex.Lock()
+		b.forwards[request.Id] = forward
+		b.mutex.Unlock()
+
+		err := target.proto.send(messageTypeForwardRequest, &ForwardRequest{
+			Id:                request.Id,
+			Source:            request.Source,
+			SourceAddr:        fmt.Sprintf("%s:%d", client.addr.IP, client.addr.Port),
+			Target:            request.Target,
+			TargetAddr:        fmt.Sprintf("%s:%d", target.addr.IP, target.addr.Port),
+			TargetForwardAddr: request.TargetForwardAddr,
+			TargetCommand:     request.TargetCommand,
+		})
+		if err != nil {
+			log.Printf("Failed to respond to forward request: " + err.Error())
+		}
+	}
+}
+
+func (b *broker) handleForwardResponse(client *brokerClient, response *ForwardResponse) {
+	b.mutex.RLock()
+	forward, ok := b.forwards[response.Id]
+	b.mutex.RUnlock()
+
+	if !ok {
+		log.Println("Cannot forward response, cannot find connection")
+	} else {
+		err := forward.source.proto.send(messageTypeForwardResponse, response)
+		if err != nil {
+			log.Printf("Failed to forward to forward response: " + err.Error())
+		}
+	}
+}
+

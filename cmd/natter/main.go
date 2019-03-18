@@ -9,9 +9,6 @@ import (
 	"strings"
 )
 
-// TODO Close connection when remote command/port closes
-// TODO properly close goroutines/forwards
-
 func main() {
 	serverFlag := flag.Bool("server", false, "Run in server mode")
 	configFlag := flag.String("config", "", "Config file")
@@ -34,7 +31,7 @@ func runClient(configFlag *string, nameFlag *string, brokerFlag *string, listenF
 
 	// Process -listen flag
 	if *listenFlag {
-		err := client.ListenIncoming()
+		err := client.Listen()
 		if err != nil {
 			fail(err)
 		}
@@ -108,16 +105,6 @@ func runClient(configFlag *string, nameFlag *string, brokerFlag *string, listenF
 	select { }
 }
 
-func parseSpec(spec []string) (sourceAddr string, target string, targetHost string, targetPort string) {
-	if len(spec) == 3 {
-		return spec[0], spec[1], "", spec[2]
-	} else if len(spec) == 4 {
-		return spec[0], spec[1], spec[2], spec[3]
-	}
-
-	return "", "", "", ""
-}
-
 func loadConfig(configFlag *string, nameFlag *string, brokerFlag *string) *natter.ClientConfig {
 	var config *natter.ClientConfig
 	var err error
@@ -156,7 +143,7 @@ func loadConfig(configFlag *string, nameFlag *string, brokerFlag *string) *natte
 	return config
 }
 
-func createClient(config *natter.ClientConfig) *natter.Client {
+func createClient(config *natter.ClientConfig) natter.Client {
 	client, err := natter.NewClient(config)
 	if err != nil {
 		fail(err)
@@ -178,7 +165,9 @@ func runServer() {
 	listenAddr := flag.Arg(0)
 
 	server := natter.NewBroker()
-	server.ListenAndServe(listenAddr)
+	if err := server.ListenAndServe(listenAddr); err != nil {
+		fail(err)
+	}
 }
 
 func syntax() {
