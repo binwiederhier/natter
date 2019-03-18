@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/golang/protobuf/proto"
 	"github.com/lucas-clemente/quic-go"
+	"heckel.io/natter/internal"
 	"log"
 	"math/rand"
 	"net"
@@ -169,7 +170,7 @@ func (b *clientConn) handleCheckinLoop() {
 	}()
 
 	for {
-		err := b.proto.send(messageTypeCheckinRequest, &CheckinRequest{Source: b.config.ClientUser})
+		err := b.proto.send(messageTypeCheckinRequest, &internal.CheckinRequest{Source: b.config.ClientUser})
 		if err != nil {
 			log.Println("Error sending checking request to broker: " + err.Error())
 			return

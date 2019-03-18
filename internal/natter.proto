@@ -1,5 +1,5 @@
 syntax = "proto3";
-package natter;
+package internal;
 
 // 0x01
 message CheckinRequest {

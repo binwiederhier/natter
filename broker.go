@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/lucas-clemente/quic-go"
 	"github.com/lucas-clemente/quic-go/qerr"
+	"heckel.io/natter/internal"
 	"log"
 	"net"
 	"sync"
@@ -27,13 +28,11 @@ type brokerForward struct {
 	target *brokerClient
 }
 
-func NewBroker() *broker {
-	return &broker{}
-}
+func ListenAndServe(listenAddr string) error {
+	broker := &broker{}
 
-func (b *broker) ListenAndServe(listenAddr string) error {
-	b.clients = make(map[string]*brokerClient)
-	b.forwards = make(map[string]*brokerForward)
+	broker.clients = make(map[string]*brokerClient)
+	broker.forwards = make(map[string]*brokerForward)
 
 	listener, err := quic.ListenAddr(listenAddr, generateTlsConfig(), generateQuicConfig()) // TODO fix this
 	if err != nil {
@@ -49,7 +48,7 @@ func (b *broker) ListenAndServe(listenAddr string) error {
 			continue
 		}
 
-		go b.handleSession(session)
+		go broker.handleSession(session)
 	}
 
 	return nil
@@ -93,16 +92,16 @@ func (b *broker) handleClient(client *brokerClient) {
 
 		switch messageType {
 		case messageTypeCheckinRequest:
-			b.handleCheckinRequest(client, message.(*CheckinRequest))
+			b.handleCheckinRequest(client, message.(*internal.CheckinRequest))
 		case messageTypeForwardRequest:
-			b.handleForwardRequest(client, message.(*ForwardRequest))
+			b.handleForwardRequest(client, message.(*internal.ForwardRequest))
 		case messageTypeForwardResponse:
-			b.handleForwardResponse(client, message.(*ForwardResponse))
+			b.handleForwardResponse(client, message.(*internal.ForwardResponse))
 		}
 	}
 }
 
-func (b *broker) handleCheckinRequest(client *brokerClient, request *CheckinRequest) {
+func (b *broker) handleCheckinRequest(client *brokerClient, request *internal.CheckinRequest) {
 	remoteAddr := fmt.Sprintf("%s:%d", client.addr.IP, client.addr.Port)
 
 	log.Println("Client", request.Source, "with address", remoteAddr, "connected")
@@ -116,19 +115,19 @@ func (b *broker) handleCheckinRequest(client *brokerClient, request *CheckinRequ
 		log.Println("-", client, conn.addr)
 	}
 
-	err := client.proto.send(messageTypeCheckinResponse, &CheckinResponse{Addr: remoteAddr})
+	err := client.proto.send(messageTypeCheckinResponse, &internal.CheckinResponse{Addr: remoteAddr})
 	if err != nil {
 		log.Println("Cannot respond to client: " + err.Error())
 	}
 }
 
-func (b *broker) handleForwardRequest(client *brokerClient, request *ForwardRequest) {
+func (b *broker) handleForwardRequest(client *brokerClient, request *internal.ForwardRequest) {
 	b.mutex.RLock()
 	target , ok := b.clients[request.Target]
 	b.mutex.RUnlock()
 
 	if !ok {
-		err := client.proto.send(messageTypeForwardResponse, &ForwardResponse{
+		err := client.proto.send(messageTypeForwardResponse, &internal.ForwardResponse{
 			Id:      request.Id,
 			Success: false,
 		})
@@ -147,7 +146,7 @@ func (b *broker) handleForwardRequest(client *brokerClient, request *ForwardRequ
 		b.forwards[request.Id] = forward
 		b.mutex.Unlock()
 
-		err := target.proto.send(messageTypeForwardRequest, &ForwardRequest{
+		err := target.proto.send(messageTypeForwardRequest, &internal.ForwardRequest{
 			Id:                request.Id,
 			Source:            request.Source,
 			SourceAddr:        fmt.Sprintf("%s:%d", client.addr.IP, client.addr.Port),
@@ -162,7 +161,7 @@ func (b *broker) handleForwardRequest(client *brokerClient, request *ForwardRequ
 	}
 }
 
-func (b *broker) handleForwardResponse(client *brokerClient, response *ForwardResponse) {
+func (b *broker) handleForwardResponse(client *brokerClient, response *internal.ForwardResponse) {
 	b.mutex.RLock()
 	forward, ok := b.forwards[response.Id]
 	b.mutex.RUnlock()

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/golang/protobuf/proto"
 	"github.com/lucas-clemente/quic-go"
+	"heckel.io/natter/internal"
 	"io"
 	"log"
 	"math/rand"
@@ -74,28 +75,6 @@ func NewClient(config *ClientConfig) (Client, error) {
 	return client, nil
 }
 
-func LoadClientConfig(filename string) (*ClientConfig, error) {
-	rawconfig, err := loadRawConfig(filename)
-	if err != nil {
-		return nil, err
-	}
-
-	clientUser, ok := rawconfig["ClientUser"]
-	if !ok {
-		return nil, errors.New("invalid config file, ClientUser setting is missing")
-	}
-
-	brokerAddr, ok := rawconfig["BrokerAddr"]
-	if !ok {
-		return nil, errors.New("invalid config file, Server setting is missing")
-	}
-
-	return &ClientConfig{
-		ClientUser: clientUser,
-		BrokerAddr: brokerAddr,
-	}, nil
-}
-
 func (client *client) Listen() error {
 	err := client.conn.connect()
 	if err != nil {
@@ -160,7 +139,7 @@ func (client *client) Forward(localAddr string, target string, targetForwardAddr
 
 	// Sending forward request
 	log.Printf("Requesting connection to target %s on TCP address %s\n", target, targetForwardAddr)
-	err = client.conn.Send(messageTypeForwardRequest, &ForwardRequest{
+	err = client.conn.Send(messageTypeForwardRequest, &internal.ForwardRequest{
 		Id:                forward.id,
 		Source:            forward.source,
 		Target:            forward.target,
@@ -180,9 +159,9 @@ func (client *client) handleBrokerMessage(messageType messageType, message proto
 	case messageTypeCheckinResponse:
 		// Ignore
 	case messageTypeForwardRequest:
-		client.handleForwardRequest(message.(*ForwardRequest))
+		client.handleForwardRequest(message.(*internal.ForwardRequest))
 	case messageTypeForwardResponse:
-		client.handleForwardResponse(message.(*ForwardResponse))
+		client.handleForwardResponse(message.(*internal.ForwardResponse))
 	default:
 		log.Println("Unknown message type", int(messageType))
 	}
@@ -251,7 +230,7 @@ func (client *client) openPeerStream(forward *forward, localStream io.ReadWriter
 	go func() { io.Copy(localStream, peerStream) }()
 }
 
-func (client *client) handleForwardRequest(request *ForwardRequest) {
+func (client *client) handleForwardRequest(request *internal.ForwardRequest) {
 	// TODO ignore if not in "daemon mode"
 
 	log.Printf("Accepted forward request from %s to TCP addr %s", request.Source, request.TargetForwardAddr)
@@ -259,7 +238,7 @@ func (client *client) handleForwardRequest(request *ForwardRequest) {
 	peerUdpAddr, err := net.ResolveUDPAddr("udp4", request.SourceAddr)
 	if err != nil {
 		log.Println("Cannot resolve peer udp addr: " + err.Error())
-		client.conn.Send(messageTypeForwardResponse, &ForwardResponse{Success: false})
+		client.conn.Send(messageTypeForwardResponse, &internal.ForwardResponse{Success: false})
 		return // TODO close forward
 	}
 
@@ -278,7 +257,7 @@ func (client *client) handleForwardRequest(request *ForwardRequest) {
 
 	client.forwards[request.Id] = forward
 
-	err = client.conn.Send(messageTypeForwardResponse, &ForwardResponse{
+	err = client.conn.Send(messageTypeForwardResponse, &internal.ForwardResponse{
 		Id:         request.Id,
 		Success:    true,
 		Source:     request.Source,
@@ -294,7 +273,7 @@ func (client *client) handleForwardRequest(request *ForwardRequest) {
 	go client.punch(peerUdpAddr)
 }
 
-func (client *client) handleForwardResponse(response *ForwardResponse) {
+func (client *client) handleForwardResponse(response *internal.ForwardResponse) {
 	client.forwardsMutex.Lock()
 	defer client.forwardsMutex.Unlock()
 

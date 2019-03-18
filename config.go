@@ -2,9 +2,32 @@ package natter
 
 import (
 	"bufio"
+	"errors"
 	"os"
 	"regexp"
 )
+
+func LoadClientConfig(filename string) (*ClientConfig, error) {
+	rawconfig, err := loadRawConfig(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	clientUser, ok := rawconfig["ClientUser"]
+	if !ok {
+		return nil, errors.New("invalid config file, ClientUser setting is missing")
+	}
+
+	brokerAddr, ok := rawconfig["BrokerAddr"]
+	if !ok {
+		return nil, errors.New("invalid config file, Server setting is missing")
+	}
+
+	return &ClientConfig{
+		ClientUser: clientUser,
+		BrokerAddr: brokerAddr,
+	}, nil
+}
 
 func loadRawConfig(filename string) (map[string]string, error) {
 	file, err := os.Open(filename)

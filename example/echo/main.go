@@ -17,8 +17,7 @@ func main() {
 }
 
 func startBroker() {
-	broker := natter.NewBroker()
-	go broker.ListenAndServe(":5000")
+	go natter.ListenAndServe(":5000")
 }
 
 func startAlice() {

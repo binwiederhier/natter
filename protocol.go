@@ -10,6 +10,7 @@ import (
 	"errors"
 	"github.com/golang/protobuf/proto"
 	"github.com/lucas-clemente/quic-go"
+	"heckel.io/natter/internal"
 	"io"
 	"log"
 	"math/big"
@@ -102,13 +103,13 @@ func (p *protocol) receive() (messageType, proto.Message, error) {
 
 	switch messageType {
 	case messageTypeCheckinRequest:
-		message = &CheckinRequest{}
+		message = &internal.CheckinRequest{}
 	case messageTypeCheckinResponse:
-		message = &CheckinResponse{}
+		message = &internal.CheckinResponse{}
 	case messageTypeForwardRequest:
-		message = &ForwardRequest{}
+		message = &internal.ForwardRequest{}
 	case messageTypeForwardResponse:
-		message = &ForwardResponse{}
+		message = &internal.ForwardResponse{}
 	default:
 		return 0, nil, errors.New("Unknown message")
 	}
