@@ -110,8 +110,8 @@ func (client *client) openPeerStream(forward *forward, localStream io.ReadWriter
 	for {
 		peerUdpAddr := forward.PeerUdpAddr()
 		sniHost := fmt.Sprintf("%s:%d", forward.id, 2586) // Connection ID in the SNI host, port doesn't matter!
-		session, err := quic.Dial(client.conn.UdpConn(), peerUdpAddr, sniHost, generateQuicTlsClientConfig(),
-			generateQuicConfig()) // TODO fix this
+		session, err := quic.Dial(client.conn.UdpConn(), peerUdpAddr, sniHost, client.config.TLSConfig,
+			client.config.QuicConfig)
 
 		if err != nil {
 			log.Println("Cannot connect to remote peer via " + peerUdpAddr.String() + ". Closing.")
@@ -161,18 +161,4 @@ func (client *client) handleForwardResponse(response *internal.ForwardResponse) 
 	}
 
 	go client.punch(forward.peerUdpAddr)
-}
-
-func (client *client) punch(udpAddr *net.UDPAddr) {
-	// TODO add exitChan support!!
-
-	for {
-		udpConn := client.conn.UdpConn()
-
-		if udpConn != nil {
-			udpConn.WriteTo([]byte("punch!"), udpAddr)
-		}
-
-		time.Sleep(punchInterval)
-	}
 }

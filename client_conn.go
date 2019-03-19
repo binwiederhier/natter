@@ -21,7 +21,7 @@ type messageCallback func (messageType messageType, message proto.Message)
 type errorCallback func ()
 
 type clientConn struct {
-	config          *ClientConfig
+	config          *Config
 	messageCallback messageCallback
 	errorCallback   errorCallback
 
@@ -37,7 +37,7 @@ type clientConn struct {
 	mutex          sync.RWMutex
 }
 
-func newClientConn(config *ClientConfig, messageCallback messageCallback, errorCallback errorCallback) (*clientConn, error) {
+func newClientConn(config *Config, messageCallback messageCallback, errorCallback errorCallback) (*clientConn, error) {
 	udpBrokerAddr, err := net.ResolveUDPAddr("udp4", config.BrokerAddr)
 	if err != nil {
 		return nil, err
@@ -70,7 +70,7 @@ func (b *clientConn) connect() error {
 
 	log.Printf("Connecting to broker at %s\n", b.udpBrokerAddr.String())
 	b.session, err = quic.Dial(b.udpConn, b.udpBrokerAddr, b.udpBrokerAddr.String(),
-		generateQuicTlsClientConfig(), generateQuicConfig()) // TODO fix this
+		b.config.TLSConfig, b.config.QuicConfig)
 	if err != nil {
 		return err
 	}

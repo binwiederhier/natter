@@ -105,8 +105,8 @@ func runClient(configFlag *string, nameFlag *string, brokerFlag *string, listenF
 	select { }
 }
 
-func loadConfig(configFlag *string, nameFlag *string, brokerFlag *string) *natter.ClientConfig {
-	var config *natter.ClientConfig
+func loadConfig(configFlag *string, nameFlag *string, brokerFlag *string) *natter.Config {
+	var config *natter.Config
 	var err error
 
 	if *configFlag != "" {
@@ -117,7 +117,7 @@ func loadConfig(configFlag *string, nameFlag *string, brokerFlag *string) *natte
 			syntax()
 		}
 	} else {
-		config = &natter.ClientConfig{}
+		config = &natter.Config{}
 	}
 
 	if *nameFlag != "" {
@@ -143,7 +143,7 @@ func loadConfig(configFlag *string, nameFlag *string, brokerFlag *string) *natte
 	return config
 }
 
-func createClient(config *natter.ClientConfig) natter.Client {
+func createClient(config *natter.Config) natter.Client {
 	client, err := natter.NewClient(config)
 	if err != nil {
 		fail(err)

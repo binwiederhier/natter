@@ -1,21 +1,14 @@
 package natter
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/binary"
-	"encoding/pem"
 	"errors"
 	"github.com/golang/protobuf/proto"
 	"github.com/lucas-clemente/quic-go"
 	"heckel.io/natter/internal"
 	"io"
 	"log"
-	"math/big"
 	"sync"
-	"time"
 )
 
 type messageType byte
@@ -125,41 +118,4 @@ func (p *protocol) receive() (messageType, proto.Message, error) {
 
 func (p *protocol) close() error {
 	return p.stream.Close()
-}
-
-// Setup a bare-bones TLS config for the server
-func generateTlsConfig() *tls.Config {
-	key, err := rsa.GenerateKey(rand.Reader, 1024)
-	if err != nil {
-		panic(err)
-	}
-	template := x509.Certificate{SerialNumber: big.NewInt(1)}
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
-	if err != nil {
-		panic(err)
-	}
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-
-	tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		panic(err)
-	}
-	return &tls.Config{Certificates: []tls.Certificate{tlsCert}}
-}
-
-func generateQuicTlsClientConfig() *tls.Config {
-	return &tls.Config{
-		InsecureSkipVerify: true,
-	}
-}
-
-func generateQuicConfig() *quic.Config {
-	return &quic.Config{
-		KeepAlive:          true,
-		ConnectionIDLength: 8,
-		Versions: []quic.VersionNumber{quic.VersionGQUIC43},
-		IdleTimeout: 5 * time.Second,
-		HandshakeTimeout: 5 * time.Second,
-	}
 }

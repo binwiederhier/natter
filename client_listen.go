@@ -18,7 +18,7 @@ func (client *client) Listen() error {
 		return errors.New("cannot connect to broker: " + err.Error())
 	}
 
-	listener, err := quic.Listen(client.conn.UdpConn(), generateTlsConfig(), generateQuicConfig()) // TODO
+	listener, err := quic.Listen(client.conn.UdpConn(), client.config.TLSConfig, client.config.QuicConfig) // TODO
 	if err != nil {
 		return errors.New("cannot listen on UDP socket for incoming connections")
 	}

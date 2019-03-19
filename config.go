@@ -7,7 +7,7 @@ import (
 	"regexp"
 )
 
-func LoadClientConfig(filename string) (*ClientConfig, error) {
+func LoadClientConfig(filename string) (*Config, error) {
 	rawconfig, err := loadRawConfig(filename)
 	if err != nil {
 		return nil, err
@@ -23,7 +23,7 @@ func LoadClientConfig(filename string) (*ClientConfig, error) {
 		return nil, errors.New("invalid config file, Server setting is missing")
 	}
 
-	return &ClientConfig{
+	return &Config{
 		ClientUser: clientUser,
 		BrokerAddr: brokerAddr,
 	}, nil
@@ -56,4 +56,3 @@ func loadRawConfig(filename string) (map[string]string, error) {
 
 	return rawconfig, nil
 }
-

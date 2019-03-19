@@ -5,7 +5,7 @@ import "unsafe"
 
 //export natter_client_listen
 func natter_client_listen(clientUser *C.char, brokerAddr *C.char) C.int {
-	client, _ := NewClient(&ClientConfig{
+	client, _ := NewClient(&Config{
 		ClientUser: C.GoString(clientUser),
 		BrokerAddr: C.GoString(brokerAddr),
 	})
@@ -21,13 +21,13 @@ func natter_client_listen(clientUser *C.char, brokerAddr *C.char) C.int {
 func natter_client_forward(clientUser *C.char, brokerAddr *C.char,
 	localAddr *C.char, target *C.char, targetForwardAddr *C.char, targetCommandCount C.int, targetCommand **C.char) C.int {
 
-	client, _ := NewClient(&ClientConfig{
+	client, _ := NewClient(&Config{
 		ClientUser: C.GoString(clientUser),
 		BrokerAddr: C.GoString(brokerAddr),
 	})
 
 	if _, err := client.Forward(C.GoString(localAddr), C.GoString(target), C.GoString(targetForwardAddr),
-		GoStrings(targetCommandCount, targetCommand)); err != nil {
+		toGoStrings(targetCommandCount, targetCommand)); err != nil {
 		return 1
 	}
 
@@ -44,7 +44,7 @@ func natter_broker_listen(listenAddr *C.char) C.int {
 }
 
 // https://stackoverflow.com/questions/36188649/cgo-char-to-slice-string?rq=1
-func GoStrings(argc C.int, argv **C.char) []string {
+func toGoStrings(argc C.int, argv **C.char) []string {
 	length := int(argc)
 
 	if length > 0 {
