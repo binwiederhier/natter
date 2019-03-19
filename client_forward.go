@@ -16,6 +16,10 @@ import (
 func (c *client) Forward(localAddr string, target string, targetForwardAddr string, targetCommand []string) (Forward, error) {
 	log.Printf("Adding forward from local address %s to %s %s\n", localAddr, target, targetForwardAddr)
 
+	if target == c.config.ClientUser  {
+		return nil, errors.New("cannot forward to yourself")
+	}
+
 	err := c.conn.connect()
 	if err != nil {
 		return nil, errors.New("cannot connect to broker: " + err.Error())
@@ -38,25 +42,11 @@ func (c *client) Forward(localAddr string, target string, targetForwardAddr stri
 
 	// Listen to local TCP address
 	if localAddr == "" {
-		log.Println("Reading from STDIN")
-
-		rw := struct {
-			io.Reader
-			io.Writer
-		} {
-			os.Stdin,
-			os.Stdout,
-		}
-
-		go c.openPeerStream(forward, rw)
+		c.forwardFromStdin(forward)
 	} else {
-		log.Printf("Listening on local TCP address %s\n", localAddr)
-		localTcpListener, err := net.Listen("tcp", localAddr)
-		if err != nil {
+		if err := c.forwardFromTcp(forward); err != nil {
 			return nil, err
 		}
-
-		go c.listenTcp(forward, localTcpListener)
 	}
 
 	// Sending forward request
@@ -75,6 +65,32 @@ func (c *client) Forward(localAddr string, target string, targetForwardAddr stri
 	return forward, nil
 }
 
+func (c *client) forwardFromStdin(forward *forward) {
+	log.Println("Reading from STDIN")
+
+	rw := struct {
+		io.Reader
+		io.Writer
+	} {
+		os.Stdin,
+		os.Stdout,
+	}
+
+	go c.openPeerStream(forward, rw)
+}
+
+func (c *client) forwardFromTcp(forward *forward) error {
+	log.Printf("Listening on local TCP address %s\n", forward.sourceAddr)
+
+	localTcpListener, err := net.Listen("tcp", forward.sourceAddr)
+	if err != nil {
+		return err
+	}
+
+	go c.listenTcp(forward, localTcpListener)
+	return nil
+}
+
 func (c *client) generateConnId() string {
 	b := make([]byte, connectionIdLength)
 	for i := range b {
@@ -82,7 +98,6 @@ func (c *client) generateConnId() string {
 	}
 	return string(b)
 }
-
 
 func (c *client) listenTcp(forward *forward, listener net.Listener) {
 	for {
@@ -109,9 +124,9 @@ func (c *client) openPeerStream(forward *forward, localStream io.ReadWriter) {
 
 	for {
 		peerUdpAddr := forward.PeerUdpAddr()
+		tlsClientConfig := *c.config.TLSClientConfig // copy, because quic-go alters it!
 		sniHost := fmt.Sprintf("%s:%d", forward.id, 2586) // Connection ID in the SNI host, port doesn't matter!
-		session, err := quic.Dial(c.conn.UdpConn(), peerUdpAddr, sniHost, c.config.TLSConfig,
-			c.config.QuicConfig)
+		session, err := quic.Dial(c.conn.UdpConn(), peerUdpAddr, sniHost, &tlsClientConfig, c.config.QuicConfig)
 
 		if err != nil {
 			log.Println("Cannot connect to remote peer via " + peerUdpAddr.String() + ". Closing.")
@@ -154,9 +169,13 @@ func (c *client) handleForwardResponse(response *internal.ForwardResponse) {
 	var err error
 	log.Print("Peer address: ", response.TargetAddr)
 
+	forward.Lock()
 	forward.peerUdpAddr, err = net.ResolveUDPAddr("udp4", response.TargetAddr)
+	forward.Unlock()
+
 	if err != nil {
 		// TODO close forward
+		log.Println("Failed to resolve peer UDP address: " + err.Error())
 		return
 	}
 

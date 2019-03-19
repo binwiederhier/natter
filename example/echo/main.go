@@ -9,47 +9,44 @@ import (
 )
 
 func main() {
-	startBroker()
-	startBob()
-	startAlice()
+	// Start broker
+	broker, _ := natter.NewBroker(&natter.Config{BrokerAddr: ":5000"})
+	go broker.ListenAndServe()
+
+	// Start listening client "Bob", offering two echo servers at :7000 and :7001
+	go echoServer(":7000")
+	go echoServer(":7001")
+
+	bob, _ := natter.NewClient(&natter.Config{ClientUser: "bob", BrokerAddr: "localhost:5000"})
+	bob.Listen()
+
+	// Start forwarding client "Alice" and her two echo clients
+	alice, _ := natter.NewClient(&natter.Config{ClientUser: "alice", BrokerAddr: "localhost:5000"})
+	alice.Forward(":6000", "bob", ":7000", nil)
+	alice.Forward(":6001", "bob", ":7001", nil)
+
+	go echoClient("localhost:6000", "Alice Zero", 500)
+	go echoClient("localhost:6001", "Alice One", 600)
 
 	time.Sleep(5 * time.Second)
 }
 
-func startBroker() {
-	broker, _ := natter.NewBroker(&natter.Config{BrokerAddr: ":5000"})
-	go broker.ListenAndServe()
-}
-
-func startAlice() {
-	alice, _ := natter.NewClient(natter.Config{ClientUser: "alice", BrokerAddr: "localhost:5000"})
-	alice.Forward(":6000", "bob", ":7000", nil)
-	alice.Forward(":6001", "bob", ":7001", nil)
-
-	go startAlicesEchoClient("localhost:6000", "Alice Zero", 500)
-	go startAlicesEchoClient("localhost:6001", "Alice One", 600)
-}
-
-func startBob() {
-	go startBobsEchoServer(":7000")
-	go startBobsEchoServer(":7001")
-
-	bob, _ := natter.NewClient(natter.Config{ClientUser: "bob", BrokerAddr: "localhost:5000"})
-	bob.Listen()
-}
-
-func startAlicesEchoClient(server string, name string, wait int) {
+func echoClient(server string, name string, wait int) {
 	conn, _ := net.Dial("tcp", server)
 
 	for i := 1; i <= 5; i++ {
-		conn.Write([]byte(fmt.Sprintf("%s says %d", name, i)))
+		_, err := conn.Write([]byte(fmt.Sprintf("%s says %d", name, i)))
+		if err  != nil {
+			panic(err)
+		}
+
 		time.Sleep(time.Duration(wait) * time.Millisecond)
 	}
 
 	conn.Close()
 }
 
-func startBobsEchoServer(listenAddr string) {
+func echoServer(listenAddr string) {
 	listen, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		panic(err)

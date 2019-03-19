@@ -1,18 +1,12 @@
 package natter
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"github.com/lucas-clemente/quic-go"
 	"github.com/lucas-clemente/quic-go/qerr"
 	"heckel.io/natter/internal"
 	"log"
-	"math/big"
 	"net"
 	"sync"
 )
@@ -50,7 +44,8 @@ func NewBroker(config *Config) (Broker, error) {
 }
 
 func (b *broker) ListenAndServe() error {
-	listener, err := quic.ListenAddr(b.config.BrokerAddr, generateDefaultBrokerTLSConfig(), b.config.QuicConfig) // TODO fix this
+	tlsServerConfig := *b.config.TLSServerConfig // copy, because quic-go alters it!
+	listener, err := quic.ListenAddr(b.config.BrokerAddr, &tlsServerConfig, b.config.QuicConfig)
 	if err != nil {
 		return err
 	}
@@ -205,30 +200,9 @@ func populateBrokerConfig(config *Config) (*Config, error) {
 		newConfig.QuicConfig = generateDefaultQuicConfig()
 	}
 
-	if config.TLSConfig == nil {
-		newConfig.TLSConfig = generateDefaultTLSClientConfig()
+	if config.TLSServerConfig == nil {
+		newConfig.TLSServerConfig = generateDefaultTLSServerConfig()
 	}
 
 	return newConfig, nil
-}
-
-// Setup a bare-bones TLS config for the server
-func generateDefaultBrokerTLSConfig() *tls.Config {
-	key, err := rsa.GenerateKey(rand.Reader, 1024)
-	if err != nil {
-		panic(err)
-	}
-	template := x509.Certificate{SerialNumber: big.NewInt(1)}
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
-	if err != nil {
-		panic(err)
-	}
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-
-	tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		panic(err)
-	}
-	return &tls.Config{Certificates: []tls.Certificate{tlsCert}}
 }

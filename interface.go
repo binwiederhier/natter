@@ -50,8 +50,11 @@ type Config struct {
 	// the two peers. Example: heckel.io:2568
 	BrokerAddr string
 
+	// Configure TLS for all TLS clients
+	TLSClientConfig *tls.Config
+
 	// Configure TLS between client and server
-	TLSConfig *tls.Config
+	TLSServerConfig *tls.Config
 
 	// Override the QUIC configuration. This should not be necessary and
 	// can break the functionality, if not done correctly. Ideally, you should

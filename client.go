@@ -1,10 +1,8 @@
 package natter
 
 import (
-	"crypto/tls"
 	"errors"
 	"github.com/golang/protobuf/proto"
-	"github.com/lucas-clemente/quic-go"
 	"heckel.io/natter/internal"
 	"log"
 	"math/rand"
@@ -51,17 +49,17 @@ const (
 func NewClient(config *Config) (Client, error) {
 	rand.Seed(time.Now().UTC().UnixNano())
 
-	config, err := populateClientConfig(config)
+	newConfig, err := populateClientConfig(config)
 	if err != nil {
 		return nil, err
 	}
 
 	client := &client{}
 
-	client.config = config
+	client.config = newConfig
 	client.forwards = make(map[string]*forward)
 
-	conn, err := newClientConn(config, client.handleBrokerMessage, client.handleConnError)
+	conn, err := newClientConn(newConfig, client.handleBrokerMessage, client.handleConnError)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +67,6 @@ func NewClient(config *Config) (Client, error) {
 
 	return client, nil
 }
-
 
 func (c *client) handleBrokerMessage(messageType messageType, message proto.Message) {
 	switch messageType {
@@ -120,25 +117,13 @@ func populateClientConfig(config *Config) (*Config, error) {
 		newConfig.QuicConfig = generateDefaultQuicConfig()
 	}
 
-	if config.TLSConfig == nil {
-		newConfig.TLSConfig = generateDefaultTLSClientConfig()
+	if config.TLSServerConfig == nil {
+		newConfig.TLSServerConfig = generateDefaultTLSServerConfig()
+	}
+
+	if config.TLSClientConfig == nil {
+		newConfig.TLSClientConfig = generateDefaultTLSClientConfig()
 	}
 
 	return newConfig, nil
-}
-
-func generateDefaultQuicConfig() *quic.Config {
-	return &quic.Config{
-		KeepAlive:          true,
-		Versions:           []quic.VersionNumber{quic.VersionGQUIC43}, // Version 44 does not support multiplexing!
-		ConnectionIDLength: connectionIdLength,
-		IdleTimeout:        connectionIdleTimeout,
-		HandshakeTimeout:   connectionHandshakeTimeout,
-	}
-}
-
-func generateDefaultTLSClientConfig() *tls.Config {
-	return &tls.Config{
-		InsecureSkipVerify: true,
-	}
 }

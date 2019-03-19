@@ -6,6 +6,7 @@ help:
 	@echo "  make clean - Clean build folder"
 	@echo
 	@echo "Examples:"
+	@echo "  example_echo_[_run]      - Build/run echo client/server example"
 	@echo "  example_simple_go[_run]  - Build/run simple Go example"
 	@echo "  example_simple_c[_run]   - Build/run simple C example"
 	@echo "  example_simple_cpp[_run] - Build/run simple C++ example"
@@ -38,6 +39,17 @@ lib: proto
 	@echo
 	@echo "--> natter library built at build/lib/libnatter.so"
 	@echo
+
+example_echo: proto
+	@echo == Building echo example ==
+	mkdir -p build/example/echo
+	go build -o build/example/echo/main example/echo/main.go
+	@echo
+	@echo "--> Example built, run like this: build/example/echo/main"
+	@echo
+
+example_echo_run: example_echo
+	build/example/echo/main
 
 example_simple_go: proto
 	@echo == Building Go example ==

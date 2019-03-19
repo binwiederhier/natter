@@ -18,9 +18,9 @@ func (c *client) Listen() error {
 		return errors.New("cannot connect to broker: " + err.Error())
 	}
 
-	listener, err := quic.Listen(c.conn.UdpConn(), c.config.TLSConfig, c.config.QuicConfig) // TODO
+	listener, err := quic.Listen(c.conn.UdpConn(), c.config.TLSServerConfig, c.config.QuicConfig) // TODO
 	if err != nil {
-		return errors.New("cannot listen on UDP socket for incoming connections")
+		return errors.New("cannot listen on UDP socket for incoming connections:" + err.Error())
 	}
 
 	go c.handleIncomingPeers(listener)
@@ -36,7 +36,9 @@ func (c *client) handleForwardRequest(request *internal.ForwardRequest) {
 	peerUdpAddr, err := net.ResolveUDPAddr("udp4", request.SourceAddr)
 	if err != nil {
 		log.Println("Cannot resolve peer udp addr: " + err.Error())
-		c.conn.Send(messageTypeForwardResponse, &internal.ForwardResponse{Success: false})
+		if err := c.conn.Send(messageTypeForwardResponse, &internal.ForwardResponse{Success: false}); err != nil {
+			log.Println("Cannot send forward response: " + err.Error())
+		}
 		return // TODO close forward
 	}
 
