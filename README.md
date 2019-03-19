@@ -3,16 +3,27 @@
 **natter** is a peer-to-peer TCP port forwarding library and command line tool. It connects two clients across the Internet, 
 even if they are behind a NAT via [UDP hole punching](https://en.wikipedia.org/wiki/UDP_hole_punching) 
 ([NAT traversal](https://en.wikipedia.org/wiki/NAT_traversal)) as per [RFC 5128](https://tools.ietf.org/html/rfc5128#section-3.3.1).
-Connections are brokered via a rendevous server ("broker"), and tunneled via the [QUIC](https://en.wikipedia.org/wiki/QUIC) protocol.
+Connections are brokered (but not relayed!) via a rendevous server ("broker"), and tunneled via the [QUIC](https://en.wikipedia.org/wiki/QUIC) protocol.
 
 The command line utility `natter` implements the broker and the client. The library is natively written in Go, but 
 provides a C library (and can be used in C/C++).  
 
 ## Building
 
+You'll need [Go 1.12+](https://golang.org/) and a [protobuf compiler](https://developers.google.com/protocol-buffers/). 
+Pretty much everything can be compiled with `make`:
+
 ```
-make cmd
-make lib
+Build:
+  make all   - Build all deliverables
+  make cmd   - Build the natter CLI tool & Go library
+  make lib   - Build the natter C/C++ library
+  make clean - Clean build folder
+
+Examples:
+  example_simple_go[_run]  - Build/run simple Go example
+  example_simple_c[_run]   - Build/run simple C example
+  example_simple_cpp[_run] - Build/run simple C++ example
 ```
 
 ## Examples
@@ -27,9 +38,9 @@ You can also run examples via `make`.
 Let's assume we have 3 machines, an Internet facing broker and two clients behind different NATs alice and bob.
 Alice 
 
-First, start the broker on address 1.2.3.4:10000:
+First, start the broker on port 10000 (let's assume it listens on IP 1.2.3.4):
 ```
-broker> build/cmd/natter -server 1.2.3.4:10000
+broker> build/cmd/natter -server :10000
 ```
 
 Then start client Bob, and listen for incoming connections:
@@ -71,7 +82,7 @@ func main() {
 
 ## Contributing
 
-We are always happy to welcome new contributors!
+There is lots [TODO](TODO.md). Feel free to help out via PRs of by opening issues.
 
 ## Author
 
