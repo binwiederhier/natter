@@ -17,7 +17,8 @@ func main() {
 }
 
 func startBroker() {
-	go natter.ListenAndServe(":5000")
+	broker, _ := natter.NewBroker(&natter.Config{BrokerAddr: ":5000"})
+	go broker.ListenAndServe()
 }
 
 func startAlice() {

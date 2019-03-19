@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"github.com/lucas-clemente/quic-go"
 	"github.com/lucas-clemente/quic-go/qerr"
@@ -17,6 +18,7 @@ import (
 )
 
 type broker struct {
+	config   *Config
 	clients  map[string]*brokerClient
 	forwards map[string]*brokerForward
 
@@ -34,13 +36,21 @@ type brokerForward struct {
 	target *brokerClient
 }
 
-func ListenAndServe(listenAddr string) error {
-	broker := &broker{}
+func NewBroker(config *Config) (Broker, error) {
+	newConfig, err := populateBrokerConfig(config)
+	if err != nil {
+		return nil, err
+	}
 
-	broker.clients = make(map[string]*brokerClient)
-	broker.forwards = make(map[string]*brokerForward)
+	return &broker{
+		config: newConfig,
+		clients: make(map[string]*brokerClient),
+		forwards: make(map[string]*brokerForward),
+	}, nil
+}
 
-	listener, err := quic.ListenAddr(listenAddr, generateDefaultBrokerTLSConfig(), generateDefaultQuicConfig()) // TODO fix this
+func (b *broker) ListenAndServe() error {
+	listener, err := quic.ListenAddr(b.config.BrokerAddr, generateDefaultBrokerTLSConfig(), b.config.QuicConfig) // TODO fix this
 	if err != nil {
 		return err
 	}
@@ -54,7 +64,7 @@ func ListenAndServe(listenAddr string) error {
 			continue
 		}
 
-		go broker.handleSession(session)
+		go b.handleSession(session)
 	}
 
 	return nil
@@ -180,6 +190,26 @@ func (b *broker) handleForwardResponse(client *brokerClient, response *internal.
 			log.Printf("Failed to forward to forward response: " + err.Error())
 		}
 	}
+}
+
+func populateBrokerConfig(config *Config) (*Config, error) {
+	if config.BrokerAddr == "" {
+		return nil, errors.New("invalid config: BrokerAddr cannot be empty")
+	}
+
+	newConfig := &Config{
+		BrokerAddr: config.BrokerAddr,
+	}
+
+	if config.QuicConfig == nil {
+		newConfig.QuicConfig = generateDefaultQuicConfig()
+	}
+
+	if config.TLSConfig == nil {
+		newConfig.TLSConfig = generateDefaultTLSClientConfig()
+	}
+
+	return newConfig, nil
 }
 
 // Setup a bare-bones TLS config for the server

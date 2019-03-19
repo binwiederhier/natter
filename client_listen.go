@@ -12,23 +12,23 @@ import (
 	"time"
 )
 
-func (client *client) Listen() error {
-	err := client.conn.connect()
+func (c *client) Listen() error {
+	err := c.conn.connect()
 	if err != nil {
 		return errors.New("cannot connect to broker: " + err.Error())
 	}
 
-	listener, err := quic.Listen(client.conn.UdpConn(), client.config.TLSConfig, client.config.QuicConfig) // TODO
+	listener, err := quic.Listen(c.conn.UdpConn(), c.config.TLSConfig, c.config.QuicConfig) // TODO
 	if err != nil {
 		return errors.New("cannot listen on UDP socket for incoming connections")
 	}
 
-	go client.handleIncomingPeers(listener)
+	go c.handleIncomingPeers(listener)
 
 	return nil
 }
 
-func (client *client) handleForwardRequest(request *internal.ForwardRequest) {
+func (c *client) handleForwardRequest(request *internal.ForwardRequest) {
 	// TODO ignore if not in "daemon mode"
 
 	log.Printf("Accepted forward request from %s to TCP addr %s", request.Source, request.TargetForwardAddr)
@@ -36,7 +36,7 @@ func (client *client) handleForwardRequest(request *internal.ForwardRequest) {
 	peerUdpAddr, err := net.ResolveUDPAddr("udp4", request.SourceAddr)
 	if err != nil {
 		log.Println("Cannot resolve peer udp addr: " + err.Error())
-		client.conn.Send(messageTypeForwardResponse, &internal.ForwardResponse{Success: false})
+		c.conn.Send(messageTypeForwardResponse, &internal.ForwardResponse{Success: false})
 		return // TODO close forward
 	}
 
@@ -50,12 +50,12 @@ func (client *client) handleForwardRequest(request *internal.ForwardRequest) {
 		peerUdpAddr: peerUdpAddr,
 	}
 
-	client.forwardsMutex.Lock()
-	defer client.forwardsMutex.Unlock()
+	c.forwardsMutex.Lock()
+	defer c.forwardsMutex.Unlock()
 
-	client.forwards[request.Id] = forward
+	c.forwards[request.Id] = forward
 
-	err = client.conn.Send(messageTypeForwardResponse, &internal.ForwardResponse{
+	err = c.conn.Send(messageTypeForwardResponse, &internal.ForwardResponse{
 		Id:         request.Id,
 		Success:    true,
 		Source:     request.Source,
@@ -68,10 +68,10 @@ func (client *client) handleForwardRequest(request *internal.ForwardRequest) {
 		return // TODO close forward
 	}
 
-	go client.punch(peerUdpAddr)
+	go c.punch(peerUdpAddr)
 }
 
-func (client *client) handleIncomingPeers(listener quic.Listener) {
+func (c *client) handleIncomingPeers(listener quic.Listener) {
 	for {
 		log.Println("Waiting for connections")
 		session, err := listener.Accept()
@@ -81,22 +81,22 @@ func (client *client) handleIncomingPeers(listener quic.Listener) {
 			continue
 		}
 
-		go client.handlePeerSession(session)
+		go c.handlePeerSession(session)
 	}
 }
 
-func (client *client) handlePeerSession(session quic.Session) {
+func (c *client) handlePeerSession(session quic.Session) {
 	log.Println("Session from " + session.RemoteAddr().String() + " accepted.")
 	peerAddr := session.RemoteAddr().(*net.UDPAddr)
 	connectionId := session.ConnectionState().ServerName // Connection ID is the SNI host!
 
-	client.forwardsMutex.Lock()
+	c.forwardsMutex.Lock()
 
-	forward, ok := client.forwards[connectionId]
+	forward, ok := c.forwards[connectionId]
 	if !ok {
 		log.Printf("Cannot find forward for connection ID %s. Closing.", connectionId)
 		session.Close()
-		client.forwardsMutex.Unlock()
+		c.forwardsMutex.Unlock()
 		return
 	}
 
@@ -109,7 +109,7 @@ func (client *client) handlePeerSession(session quic.Session) {
 		log.Println("Client accepted from " + peerAddr.String() + ", forward found to " + targetForwardAddr)
 	}
 
-	client.forwardsMutex.Unlock()
+	c.forwardsMutex.Unlock()
 
 	for {
 		stream, err := session.AcceptStream()
@@ -119,21 +119,21 @@ func (client *client) handlePeerSession(session quic.Session) {
 			break
 		}
 
-		go client.handlePeerStream(session, stream, targetForwardAddr, targetCommand)
+		go c.handlePeerStream(session, stream, targetForwardAddr, targetCommand)
 	}
 }
 
-func (client *client) handlePeerStream(session quic.Session, stream quic.Stream, targetForwardAddr string, targetCommand []string) {
+func (c *client) handlePeerStream(session quic.Session, stream quic.Stream, targetForwardAddr string, targetCommand []string) {
 	log.Printf("Stream %d accepted. Starting to forward.\n", stream.StreamID())
 
 	if targetCommand != nil && len(targetCommand) > 0 {
-		client.forwardToCommand(stream, targetCommand)
+		c.forwardToCommand(stream, targetCommand)
 	} else {
-		client.forwardToTcp(stream, targetForwardAddr)
+		c.forwardToTcp(stream, targetForwardAddr)
 	}
 }
 
-func (client *client) forwardToCommand(stream quic.Stream, targetCommand []string) {
+func (c *client) forwardToCommand(stream quic.Stream, targetCommand []string) {
 	cmd := exec.Command(targetCommand[0], targetCommand[1:]...)
 
 	stdin, err := cmd.StdinPipe()
@@ -158,7 +158,7 @@ func (client *client) forwardToCommand(stream quic.Stream, targetCommand []strin
 	go func() { io.Copy(stdin, stream) }()
 }
 
-func (client *client) forwardToTcp(stream quic.Stream, targetForwardAddr string) {
+func (c *client) forwardToTcp(stream quic.Stream, targetForwardAddr string) {
 	forwardStream, err := net.Dial("tcp", targetForwardAddr)
 	if err != nil {
 		log.Printf("Cannot open connection to %s: %s\n", targetForwardAddr, err.Error())

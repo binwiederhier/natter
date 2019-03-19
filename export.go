@@ -36,8 +36,13 @@ func natter_client_forward(clientUser *C.char, brokerAddr *C.char,
 
 //export natter_broker_listen
 func natter_broker_listen(listenAddr *C.char) C.int {
-	if err := ListenAndServe(C.GoString(listenAddr)); err != nil {
+	broker, err := NewBroker(&Config{BrokerAddr: C.GoString(listenAddr)})
+	if err != nil {
 		return 1
+	}
+
+	if err := broker.ListenAndServe(); err != nil {
+		return 2
 	}
 
 	return 0 // Unreachable

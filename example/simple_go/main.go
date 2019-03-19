@@ -5,7 +5,8 @@ import (
 )
 
 func main() {
-	go natter.ListenAndServe(":10000")
+	broker, _ := natter.NewBroker(&natter.Config{BrokerAddr: ":10000"})
+	go broker.ListenAndServe()
 
 	bob, _ := natter.NewClient(&natter.Config{ClientUser: "bob", BrokerAddr: "localhost:10000"})
 	bob.Listen()

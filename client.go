@@ -71,28 +71,28 @@ func NewClient(config *Config) (Client, error) {
 }
 
 
-func (client *client) handleBrokerMessage(messageType messageType, message proto.Message) {
+func (c *client) handleBrokerMessage(messageType messageType, message proto.Message) {
 	switch messageType {
 	case messageTypeCheckinResponse:
 		// Ignore
 	case messageTypeForwardRequest:
-		client.handleForwardRequest(message.(*internal.ForwardRequest))
+		c.handleForwardRequest(message.(*internal.ForwardRequest))
 	case messageTypeForwardResponse:
-		client.handleForwardResponse(message.(*internal.ForwardResponse))
+		c.handleForwardResponse(message.(*internal.ForwardResponse))
 	default:
 		log.Println("Unknown message type", int(messageType))
 	}
 }
 
-func (client *client) handleConnError() {
+func (c *client) handleConnError() {
 	log.Println("Connection error.")
 }
 
-func (client *client) punch(udpAddr *net.UDPAddr) {
+func (c *client) punch(udpAddr *net.UDPAddr) {
 	// TODO add exitChan support!!
 
 	for {
-		udpConn := client.conn.UdpConn()
+		udpConn := c.conn.UdpConn()
 
 		if udpConn != nil {
 			udpConn.WriteTo([]byte("punch!"), udpAddr)

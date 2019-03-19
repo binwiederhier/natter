@@ -164,7 +164,12 @@ func runServer() {
 
 	listenAddr := flag.Arg(0)
 
-	if err := natter.ListenAndServe(listenAddr); err != nil {
+	broker, err := natter.NewBroker(&natter.Config{BrokerAddr: listenAddr})
+	if err != nil {
+		fail(err)
+	}
+
+	if err := broker.ListenAndServe(); err != nil {
 		fail(err)
 	}
 }
