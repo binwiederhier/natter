@@ -127,20 +127,13 @@ func (client *client) handlePeerStream(session quic.Session, stream quic.Stream,
 	log.Printf("Stream %d accepted. Starting to forward.\n", stream.StreamID())
 
 	if targetCommand != nil && len(targetCommand) > 0 {
-		client.startAndForwardCommand(stream, targetCommand)
+		client.forwardToCommand(stream, targetCommand)
 	} else {
-		forwardStream, err := net.Dial("tcp", targetForwardAddr)
-		if err != nil {
-			log.Printf("Cannot open connection to %s: %s\n", targetForwardAddr, err.Error())
-			return // TODO close forward
-		}
-
-		go func() { io.Copy(stream, forwardStream) }()
-		go func() { io.Copy(forwardStream, stream) }()
+		client.forwardToTcp(stream, targetForwardAddr)
 	}
 }
 
-func (client *client) startAndForwardCommand(stream quic.Stream, targetCommand []string) {
+func (client *client) forwardToCommand(stream quic.Stream, targetCommand []string) {
 	cmd := exec.Command(targetCommand[0], targetCommand[1:]...)
 
 	stdin, err := cmd.StdinPipe()
@@ -163,5 +156,16 @@ func (client *client) startAndForwardCommand(stream quic.Stream, targetCommand [
 
 	go func() { io.Copy(stream, stdout) }()
 	go func() { io.Copy(stdin, stream) }()
-
 }
+
+func (client *client) forwardToTcp(stream quic.Stream, targetForwardAddr string) {
+	forwardStream, err := net.Dial("tcp", targetForwardAddr)
+	if err != nil {
+		log.Printf("Cannot open connection to %s: %s\n", targetForwardAddr, err.Error())
+		return // TODO close forward
+	}
+
+	go func() { io.Copy(stream, forwardStream) }()
+	go func() { io.Copy(forwardStream, stream) }()
+}
+
