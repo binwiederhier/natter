@@ -8,6 +8,11 @@ Connections are brokered (but not relayed!) via a rendevous server ("broker"), a
 The command line utility `natter` implements the broker and the client. The library is natively written in Go, but 
 provides a C library (and can be used in C/C++).  
 
+## Project Status
+
+While the functionality is very close to what I want the library to be, the project and library API is a 
+**work in progress**, mostly because this is my first Go project.
+
 ## Building
 
 You'll need [Go 1.12+](https://golang.org/) and a [protobuf compiler](https://developers.google.com/protocol-buffers/). 
