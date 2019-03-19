@@ -41,11 +41,10 @@ You can also run examples via `make`.
 ### With the CLI
 
 Let's assume we have 3 machines, an Internet facing broker and two clients behind different NATs alice and bob.
-Alice 
 
 First, start the broker on port 10000 (let's assume it listens on IP 1.2.3.4):
 ```
-broker> build/cmd/natter -server :10000
+broker> natter -server :10000
 ```
 
 Then start client Bob, and listen for incoming connections:

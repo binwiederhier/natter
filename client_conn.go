@@ -69,8 +69,8 @@ func (b *clientConn) connect() error {
 	}
 
 	log.Printf("Connecting to broker at %s\n", b.udpBrokerAddr.String())
+
 	tlsClientConfig := *b.config.TLSClientConfig // copy, because quic-go alters it!
-	log.Printf("%#v", b.config.TLSClientConfig)
 	b.session, err = quic.Dial(b.udpConn, b.udpBrokerAddr, b.udpBrokerAddr.String(), &tlsClientConfig, b.config.QuicConfig)
 	if err != nil {
 		return err
@@ -80,7 +80,6 @@ func (b *clientConn) connect() error {
 	if err != nil {
 		return err
 	}
-	log.Printf("%#v", b.config.TLSClientConfig)
 
 	b.proto = &protocol{stream: stream}
 	b.exitChan = make(chan int)
