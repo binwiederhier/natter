@@ -23,9 +23,9 @@ func LoadConfig(filename string) (*Config, error) {
 
 	config := &Config{}
 
-	clientUser, ok := raw["ClientUser"]
+	clientId, ok := raw["ClientId"]
 	if ok {
-		config.ClientUser = clientUser
+		config.ClientId = clientId
 	}
 
 	brokerAddr, ok := raw["BrokerAddr"]

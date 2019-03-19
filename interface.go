@@ -18,7 +18,7 @@ type Client interface {
 	// If the address is omitted, all local addressed will be bound to, e.g. :9000
 	// If it is empty, STDIN is read.
 	//
-	// target is the client identifier (see ClientUser below) of the target client.
+	// target is the client identifier (see ClientId below) of the target client.
 	// It cannot be empty.
 	//
 	// targetForwardAddr is the target TCP [address]:port on the target client, e.g. 192.168.1.2:22
@@ -44,7 +44,7 @@ type Forward interface {
 type Config struct {
 	// Identifier used to uniquely identify individual clients. It is important
 	// and required to be able to connect to other clients. Example: myclient123
-	ClientUser string
+	ClientId string
 
 	// Hostname and port of the broker. The broker is only used to connect
 	// the two peers. Example: heckel.io:2568
@@ -60,4 +60,6 @@ type Config struct {
 	// can break the functionality, if not done correctly. Ideally, you should
 	// not change any settings here.
 	QuicConfig *quic.Config
+
+	// TODO Add "Listen" and "Forwards" flags
 }

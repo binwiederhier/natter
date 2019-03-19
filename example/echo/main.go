@@ -17,11 +17,11 @@ func main() {
 	go echoServer(":7000")
 	go echoServer(":7001")
 
-	bob, _ := natter.NewClient(&natter.Config{ClientUser: "bob", BrokerAddr: "localhost:5000"})
+	bob, _ := natter.NewClient(&natter.Config{ClientId: "bob", BrokerAddr: "localhost:5000"})
 	bob.Listen()
 
 	// Start forwarding client "Alice" and her two echo clients
-	alice, _ := natter.NewClient(&natter.Config{ClientUser: "alice", BrokerAddr: "localhost:5000"})
+	alice, _ := natter.NewClient(&natter.Config{ClientId: "alice", BrokerAddr: "localhost:5000"})
 	alice.Forward(":6000", "bob", ":7000", nil)
 	alice.Forward(":6001", "bob", ":7001", nil)
 

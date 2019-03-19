@@ -171,7 +171,7 @@ func (b *clientConn) handleCheckinLoop() {
 	}()
 
 	for {
-		err := b.proto.send(messageTypeCheckinRequest, &internal.CheckinRequest{Source: b.config.ClientUser})
+		err := b.proto.send(messageTypeCheckinRequest, &internal.CheckinRequest{Source: b.config.ClientId})
 		if err != nil {
 			log.Println("Error sending checking request to broker: " + err.Error())
 			return

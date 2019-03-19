@@ -6,7 +6,7 @@ import "unsafe"
 //export natter_client_listen
 func natter_client_listen(clientUser *C.char, brokerAddr *C.char) C.int {
 	client, _ := NewClient(&Config{
-		ClientUser: C.GoString(clientUser),
+		ClientId:   C.GoString(clientUser),
 		BrokerAddr: C.GoString(brokerAddr),
 	})
 
@@ -22,7 +22,7 @@ func natter_client_forward(clientUser *C.char, brokerAddr *C.char,
 	localAddr *C.char, target *C.char, targetForwardAddr *C.char, targetCommandCount C.int, targetCommand **C.char) C.int {
 
 	client, _ := NewClient(&Config{
-		ClientUser: C.GoString(clientUser),
+		ClientId:   C.GoString(clientUser),
 		BrokerAddr: C.GoString(brokerAddr),
 	})
 

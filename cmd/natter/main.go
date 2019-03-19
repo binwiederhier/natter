@@ -5,29 +5,45 @@ import (
 	"flag"
 	"fmt"
 	"heckel.io/natter"
+	"log"
 	"os"
 	"strings"
 )
 
+const (
+	defaultConfigFile = "/etc/natter/natter.conf"
+)
+
 func main() {
-	serverFlag := flag.Bool("server", false, "Broker mode")
-	configFlag := flag.String("config", "", "Config file")
-	nameFlag := flag.String("name", "", "Client name")
-	brokerFlag := flag.String("broker", "", "Broker address, e.g. example.com:1000")
-	listenFlag := flag.Bool("listen", false, "Run client in listen mode")
+	configFlag := flag.String("config", "", "Config file, defaults to /etc/natter/natter.conf")
+	brokerFlag := flag.String("broker", "", "Broker address and port")
+	clientFlag := flag.String("client", "", "Client identifier (client only)")
+	listenFlag := flag.Bool("listen", false, "Listen for incoming forwards (client only)")
 
 	flag.Parse()
 
-	if *serverFlag {
-		runServer(configFlag)
+	config := loadConfig(configFlag, clientFlag, brokerFlag)
+
+	if config.ClientId != "" {
+		runClient(config, listenFlag)
 	} else {
-		runClient(configFlag, nameFlag, brokerFlag, listenFlag)
+		runBroker(config)
 	}
 }
 
-func runClient(configFlag *string, nameFlag *string, brokerFlag *string, listenFlag *bool) {
-	config := loadClientConfig(configFlag, nameFlag, brokerFlag)
-	client := createClient(config)
+func runClient(config *natter.Config, listenFlag *bool) {
+	if config.BrokerAddr == "" {
+		fmt.Println("Broker address cannot be empty.")
+		fmt.Println()
+		syntax()
+	}
+
+	log.Println("Starting natter in client mode, client ID is " + config.ClientId)
+
+	client, err := natter.NewClient(config)
+	if err != nil {
+		fail(err)
+	}
 
 	// Process -listen flag
 	if *listenFlag {
@@ -105,80 +121,7 @@ func runClient(configFlag *string, nameFlag *string, brokerFlag *string, listenF
 	select { }
 }
 
-func loadClientConfig(configFlag *string, nameFlag *string, brokerFlag *string) *natter.Config {
-	var config *natter.Config
-	var err error
-
-	if *configFlag != "" {
-		config, err = natter.LoadConfig(*configFlag)
-		if err != nil {
-			fmt.Println(err.Error())
-			fmt.Println()
-			syntax()
-		}
-	} else {
-		config = &natter.Config{}
-	}
-
-	if *nameFlag != "" {
-		config.ClientUser = *nameFlag
-	}
-
-	if *brokerFlag != "" {
-		config.BrokerAddr = *brokerFlag
-	}
-
-	if config.ClientUser == "" {
-		fmt.Println("Client name cannot be empty.")
-		fmt.Println()
-		syntax()
-	}
-
-	if config.BrokerAddr == "" {
-		fmt.Println("Broker address cannot be empty.")
-		fmt.Println()
-		syntax()
-	}
-
-	return config
-}
-
-func createClient(config *natter.Config) natter.Client {
-	client, err := natter.NewClient(config)
-	if err != nil {
-		fail(err)
-	}
-
-	return client
-}
-
-func runServer(configFlag *string) {
-	config := loadServerConfig(configFlag)
-	broker, err := natter.NewBroker(config)
-	if err != nil {
-		fail(err)
-	}
-
-	if err := broker.ListenAndServe(); err != nil {
-		fail(err)
-	}
-}
-
-func loadServerConfig(configFlag *string) *natter.Config {
-	var config *natter.Config
-	var err error
-
-	if *configFlag != "" {
-		config, err = natter.LoadConfig(*configFlag)
-		if err != nil {
-			fmt.Println(err.Error())
-			fmt.Println()
-			syntax()
-		}
-	} else {
-		config = &natter.Config{}
-	}
-
+func runBroker(config *natter.Config) {
 	if flag.NArg() > 0 {
 		config.BrokerAddr = flag.Arg(0)
 	}
@@ -189,13 +132,53 @@ func loadServerConfig(configFlag *string) *natter.Config {
 		syntax()
 	}
 
+	log.Println("Starting natter in broker mode, listening on " + config.BrokerAddr)
+
+	broker, err := natter.NewBroker(config)
+	if err != nil {
+		fail(err)
+	}
+
+	if err := broker.ListenAndServe(); err != nil {
+		fail(err)
+	}
+}
+
+func loadConfig(configFlag *string, clientFlag *string, brokerFlag *string) *natter.Config {
+	var config *natter.Config
+	var err error
+
+	if *configFlag != "" {
+		config, err = natter.LoadConfig(*configFlag)
+		if err != nil {
+			fmt.Println(err.Error())
+			fmt.Println()
+			syntax()
+		}
+	} else if _, err := os.Stat(defaultConfigFile); err == nil {
+		config, err = natter.LoadConfig(defaultConfigFile)
+		if err != nil {
+			fmt.Println(err.Error())
+		}
+	} else {
+		config = &natter.Config{}
+	}
+
+	if *clientFlag != "" {
+		config.ClientId = *clientFlag
+	}
+
+	if *brokerFlag != "" {
+		config.BrokerAddr = *brokerFlag
+	}
+
 	return config
 }
 
 func syntax() {
 	fmt.Println("Syntax:")
-	fmt.Println("  natter -server :PORT")
-	fmt.Println("    Start the rendevous server on PORT for new client connections")
+	fmt.Println("  natter -broker :PORT")
+	fmt.Println("    Start the broker / rendevous server on PORT for new client connections")
 	fmt.Println()
 	fmt.Println("  natter [-config CONFIG] [-name CLIENTNAME] [-broker BROKER] [-listen] [FORWARDSPEC ...] [COMMAND]")
 	fmt.Println("    Start client side daemon to listen for incoming forwards")

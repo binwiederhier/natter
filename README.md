@@ -26,6 +26,7 @@ Build:
   make clean - Clean build folder
 
 Examples:
+  example_echo_[_run]      - Build/run echo client/server example
   example_simple_go[_run]  - Build/run simple Go example
   example_simple_c[_run]   - Build/run simple C example
   example_simple_cpp[_run] - Build/run simple C++ example
@@ -38,13 +39,13 @@ reasons, all examples operate on localhost, but they could work across multiple 
 
 You can also run examples via `make`.
  
-### With the CLI
+### TCP port forwarding using the natter CLI
 
 Let's assume we have 3 machines, an Internet facing broker and two clients behind different NATs alice and bob.
 
 First, start the broker on port 10000 (let's assume it listens on IP 1.2.3.4):
 ```
-broker> natter -server :10000
+broker> natter -broker :10000
 ```
 
 Then start client Bob, and listen for incoming connections:
@@ -59,7 +60,20 @@ alice> natter -name alice -broker 1.2.3.4:10000 8022:bob:22
 alice> ssh -p 8022 root@localhost
 ```
 
-### With the Go library
+## STDIN-to-remote-command forwarding using the natter CLI
+
+This is a fun example. It forwards the output of a local command to the input of a remote command, again, assuming 
+that your broker is listening on 1.2.3.4:10000 and your remote client is Bob, like above:
+
+```
+alice> cat /etc/natter/natter.conf
+ClientId alice
+BrokerAddr 1.2.3.4:10000
+
+alice> cat /dev/zero | natter :bob: sh -c 'cat > zeros'
+```
+
+### Using the Go library
 
 Here's the same example on localhost:
 
@@ -74,10 +88,10 @@ func main() {
 	broker, _ := natter.NewBroker(&natter.Config{BrokerAddr: ":10000"})
 	go broker.ListenAndServe()
 
-	bob, _ := natter.NewClient(&natter.Config{ClientUser: "bob", BrokerAddr: "localhost:10000"})
+	bob, _ := natter.NewClient(&natter.Config{ClientId: "bob", BrokerAddr: "localhost:10000"})
 	bob.Listen()
 
-	alice, _ := natter.NewClient(&natter.Config{ClientUser: "alice", BrokerAddr: "localhost:10000"})
+	alice, _ := natter.NewClient(&natter.Config{ClientId: "alice", BrokerAddr: "localhost:10000"})
 	alice.Forward(":8022", "bob", ":22", nil)
 
 	select {}

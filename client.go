@@ -100,8 +100,8 @@ func (c *client) punch(udpAddr *net.UDPAddr) {
 }
 
 func populateClientConfig(config *Config) (*Config, error) {
-	if config.ClientUser == "" {
-		return nil, errors.New("invalid config: ClientUser cannot be empty")
+	if config.ClientId == "" {
+		return nil, errors.New("invalid config: ClientId cannot be empty")
 	}
 
 	if config.BrokerAddr == "" {
@@ -109,7 +109,7 @@ func populateClientConfig(config *Config) (*Config, error) {
 	}
 
 	newConfig := &Config{
-		ClientUser: config.ClientUser,
+		ClientId:   config.ClientId,
 		BrokerAddr: config.BrokerAddr,
 	}
 

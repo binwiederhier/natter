@@ -16,7 +16,7 @@ import (
 func (c *client) Forward(localAddr string, target string, targetForwardAddr string, targetCommand []string) (Forward, error) {
 	log.Printf("Adding forward from local address %s to %s %s\n", localAddr, target, targetForwardAddr)
 
-	if target == c.config.ClientUser  {
+	if target == c.config.ClientId {
 		return nil, errors.New("cannot forward to yourself")
 	}
 
@@ -28,7 +28,7 @@ func (c *client) Forward(localAddr string, target string, targetForwardAddr stri
 	// Create forward entry
 	forward := &forward{
 		id:                c.generateConnId(),
-		source:            c.config.ClientUser,
+		source:            c.config.ClientId,
 		sourceAddr:        localAddr,
 		target:            target,
 		targetForwardAddr: targetForwardAddr,
