@@ -1,3 +1,15 @@
+help:
+	@echo "Build:"
+	@echo "  make all   - Build all deliverables"
+	@echo "  make cmd   - Build the natter CLI tool & Go library"
+	@echo "  make lib   - Build the natter C/C++ library"
+	@echo "  make clean - Clean build folder"
+	@echo
+	@echo "Examples:"
+	@echo "  example_simple_go[_run]  - Build/run simple Go example"
+	@echo "  example_simple_c[_run]   - Build/run simple C example"
+	@echo "  example_simple_cpp[_run] - Build/run simple C++ example"
+
 all: clean proto cmd lib
 
 clean:
