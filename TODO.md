@@ -1,4 +1,5 @@
-
+- Kill remote command when connection is closed
+- Shutdown connection when STDIN is closed
 - Close connection when remote command/port closes
 - Properly close goroutines/forwards
 - Allow checking status of a forward via Forward struct
