@@ -4,16 +4,28 @@ import (
 	"errors"
 	"fmt"
 	"github.com/lucas-clemente/quic-go"
+	"github.com/songgao/water"
 	"heckel.io/natter/internal"
 	"io"
 	"log"
 	"math/rand"
 	"net"
 	"os"
+	"os/exec"
 	"time"
 )
 
-func (c *client) Forward(localAddr string, target string, targetForwardAddr string, targetCommand []string) (Forward, error) {
+func (c *client) ForwardL2(localNetwork string, target string, targetNetwork string) (Forward, error) {
+	return c.forward(forwardTypeL2, "", localNetwork, target, targetNetwork, "", []string{})
+}
+
+func (c *client) ForwardTCP(localAddr string, target string, targetForwardAddr string, targetCommand []string) (Forward, error) {
+	return c.forward(forwardTypeTCP, localAddr, "", target, "", targetForwardAddr, targetCommand)
+}
+
+func (c *client) forward(ftype string, localAddr string, localNetwork string,
+	target string, targetNetwork string, targetForwardAddr string, targetCommand []string) (Forward, error) {
+
 	log.Printf("Adding forward from local address %s to %s %s\n", localAddr, target, targetForwardAddr)
 
 	if target == c.config.ClientId {
@@ -28,9 +40,12 @@ func (c *client) Forward(localAddr string, target string, targetForwardAddr stri
 	// Create forward entry
 	forward := &forward{
 		id:                c.generateConnId(),
+		mode:              ftype,
 		source:            c.config.ClientId,
 		sourceAddr:        localAddr,
+		sourceNetwork:     localNetwork,
 		target:            target,
+		targetNetwork:     targetNetwork,
 		targetForwardAddr: targetForwardAddr,
 		targetCommand:     targetCommand,
 	}
@@ -40,21 +55,16 @@ func (c *client) Forward(localAddr string, target string, targetForwardAddr stri
 
 	c.forwards[forward.id] = forward
 
-	// Listen to local TCP address
-	if localAddr == "" {
-		c.forwardFromStdin(forward)
-	} else {
-		if err := c.forwardFromTcp(forward); err != nil {
-			return nil, err
-		}
-	}
-
 	// Sending forward request
 	log.Printf("Requesting connection to target %s on TCP address %s\n", target, targetForwardAddr)
 	err = c.conn.Send(messageTypeForwardRequest, &internal.ForwardRequest{
 		Id:                forward.id,
+		Mode:              forward.mode,
 		Source:            forward.source,
+		SourceAddr:        forward.sourceAddr,
+		SourceNetwork:     forward.sourceNetwork,
 		Target:            forward.target,
+		TargetNetwork:     forward.targetNetwork,
 		TargetForwardAddr: forward.targetForwardAddr,
 		TargetCommand:     forward.targetCommand,
 	})
@@ -89,6 +99,40 @@ func (c *client) forwardFromTcp(forward *forward) error {
 
 	go c.listenTcp(forward, localTcpListener)
 	return nil
+}
+
+func (c *client) forwardFromTap(forward *forward) {
+	go func() {
+		forward.Lock()
+		targetNetwork := forward.targetNetwork
+		forward.Unlock()
+
+		config := water.Config{
+			DeviceType: water.TAP,
+		}
+
+		config.Name = "tap" + forward.id + "0"
+
+		log.Printf("Listening on tap%s\n", config.Name)
+
+		ifce, err := water.New(config)
+		if err != nil {
+			log.Printf("Failed to create tap device %s: %s\n", config.Name, err.Error())
+			return
+		}
+
+		if out, err := exec.Command("ip", "link", "set", config.Name, "up").CombinedOutput(); err != nil {
+			log.Printf("Failed to up link %s: %s\n%s\n", config.Name, err.Error(), out)
+			return
+		}
+
+		if out, err := exec.Command("ip", "route", "add", targetNetwork, "dev", config.Name).CombinedOutput(); err != nil {
+			log.Printf("Failed to add route %s: %s\n%s\n", targetNetwork, err.Error(), out)
+			return
+		}
+
+		go c.openPeerStream(forward, ifce)
+	}()
 }
 
 func (c *client) generateConnId() string {
@@ -172,6 +216,20 @@ func (c *client) handleForwardResponse(response *internal.ForwardResponse) {
 	forward.Lock()
 	forward.peerUdpAddr, err = net.ResolveUDPAddr("udp4", response.TargetAddr)
 	forward.Unlock()
+
+	if forward.mode == forwardTypeL2 {
+		c.forwardFromTap(forward)
+	} else {
+		// Listen to local TCP address
+		if forward.sourceAddr == "" {
+			c.forwardFromStdin(forward)
+		} else {
+			if err := c.forwardFromTcp(forward); err != nil {
+				log.Println("Failed to forward from TCP")
+				return
+			}
+		}
+	}
 
 	if err != nil {
 		// TODO close forward

@@ -157,15 +157,10 @@ func (b *broker) handleForwardRequest(client *brokerClient, request *internal.Fo
 		b.forwards[request.Id] = forward
 		b.mutex.Unlock()
 
-		err := target.proto.send(messageTypeForwardRequest, &internal.ForwardRequest{
-			Id:                request.Id,
-			Source:            request.Source,
-			SourceAddr:        fmt.Sprintf("%s:%d", client.addr.IP, client.addr.Port),
-			Target:            request.Target,
-			TargetAddr:        fmt.Sprintf("%s:%d", target.addr.IP, target.addr.Port),
-			TargetForwardAddr: request.TargetForwardAddr,
-			TargetCommand:     request.TargetCommand,
-		})
+		request.SourceAddr = fmt.Sprintf("%s:%d", client.addr.IP, client.addr.Port)
+		request.TargetAddr = fmt.Sprintf("%s:%d", target.addr.IP, target.addr.Port)
+
+		err := target.proto.send(messageTypeForwardRequest, request)
 		if err != nil {
 			log.Printf("Failed to respond to forward request: " + err.Error())
 		}

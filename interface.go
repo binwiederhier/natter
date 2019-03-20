@@ -29,7 +29,9 @@ type Client interface {
 	// targetCommand can be used to execute a command on the target host and forward its STDIN,
 	// e.g. []string { "zfs", "recv" } or []string{ "sh", "-c", "cat > hello.txt" }.
 	// If targetCommand is set, targetForwardAddr is ignored.
-	Forward(localAddr string, target string, targetForwardAddr string, targetCommand []string) (Forward, error)
+	ForwardTCP(localAddr string, target string, targetForwardAddr string, targetCommand []string) (Forward, error)
+
+	ForwardL2(localNetwork string, target string, targetNetwork string) (Forward, error)
 }
 
 type Broker interface {

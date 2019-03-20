@@ -3,6 +3,7 @@ package natter
 import (
 	"errors"
 	"github.com/lucas-clemente/quic-go"
+	"github.com/songgao/water"
 	"heckel.io/natter/internal"
 	"io"
 	"log"
@@ -31,7 +32,7 @@ func (c *client) Listen() error {
 func (c *client) handleForwardRequest(request *internal.ForwardRequest) {
 	// TODO ignore if not in "daemon mode"
 
-	log.Printf("Accepted forward request from %s to TCP addr %s", request.Source, request.TargetForwardAddr)
+	log.Printf("Accepted forward request from %s to %s", request.Source, request.TargetForwardAddr)
 
 	peerUdpAddr, err := net.ResolveUDPAddr("udp4", request.SourceAddr)
 	if err != nil {
@@ -43,13 +44,16 @@ func (c *client) handleForwardRequest(request *internal.ForwardRequest) {
 	}
 
 	forward := &forward{
-		id: request.Id,
-		source: request.Source,
-		sourceAddr: request.SourceAddr,
-		target: request.Target,
+		id:                request.Id,
+		mode:              request.Mode,
+		source:            request.Source,
+		sourceAddr:        request.SourceAddr,
+		sourceNetwork:     request.SourceNetwork,
+		target:            request.Target,
+		targetNetwork:     request.TargetNetwork,
 		targetForwardAddr: request.TargetForwardAddr,
-		targetCommand: request.TargetCommand,
-		peerUdpAddr: peerUdpAddr,
+		targetCommand:     request.TargetCommand,
+		peerUdpAddr:       peerUdpAddr,
 	}
 
 	c.forwardsMutex.Lock()
@@ -89,29 +93,17 @@ func (c *client) handleIncomingPeers(listener quic.Listener) {
 
 func (c *client) handlePeerSession(session quic.Session) {
 	log.Println("Session from " + session.RemoteAddr().String() + " accepted.")
-	peerAddr := session.RemoteAddr().(*net.UDPAddr)
 	connectionId := session.ConnectionState().ServerName // Connection ID is the SNI host!
 
 	c.forwardsMutex.Lock()
-
 	forward, ok := c.forwards[connectionId]
+	c.forwardsMutex.Unlock()
+
 	if !ok {
 		log.Printf("Cannot find forward for connection ID %s. Closing.", connectionId)
 		session.Close()
-		c.forwardsMutex.Unlock()
 		return
 	}
-
-	targetForwardAddr := forward.targetForwardAddr
-	targetCommand := forward.targetCommand
-
-	if targetCommand != nil && len(targetCommand) > 0 {
-		log.Println("Client accepted from " + peerAddr.String() + ", forward found to command " + strings.Join(forward.targetCommand, " "))
-	} else {
-		log.Println("Client accepted from " + peerAddr.String() + ", forward found to " + targetForwardAddr)
-	}
-
-	c.forwardsMutex.Unlock()
 
 	for {
 		stream, err := session.AcceptStream()
@@ -121,21 +113,36 @@ func (c *client) handlePeerSession(session quic.Session) {
 			break
 		}
 
-		go c.handlePeerStream(session, stream, targetForwardAddr, targetCommand)
+		go c.handlePeerStream(session, stream, forward)
 	}
 }
 
-func (c *client) handlePeerStream(session quic.Session, stream quic.Stream, targetForwardAddr string, targetCommand []string) {
+func (c *client) handlePeerStream(session quic.Session, stream quic.Stream, forward *forward) {
 	log.Printf("Stream %d accepted. Starting to forward.\n", stream.StreamID())
 
-	if targetCommand != nil && len(targetCommand) > 0 {
-		c.forwardToCommand(stream, targetCommand)
+	forward.Lock()
+	ftype := forward.mode
+	targetCommand := forward.targetCommand
+	forward.Unlock()
+
+	if ftype == forwardTypeL2 {
+		c.forwardToTap(stream, forward)
 	} else {
-		c.forwardToTcp(stream, targetForwardAddr)
+		if targetCommand != nil && len(targetCommand) > 0 {
+			c.forwardToCommand(stream, forward)
+		} else {
+			c.forwardToTcp(stream, forward)
+		}
 	}
 }
 
-func (c *client) forwardToCommand(stream quic.Stream, targetCommand []string) {
+func (c *client) forwardToCommand(stream quic.Stream, forward *forward) {
+	forward.Lock()
+	peerUdpAddr := forward.peerUdpAddr
+	targetCommand := forward.targetCommand
+	forward.Unlock()
+
+	log.Println("Forwarding stream from " + peerUdpAddr.String() + ", forward found to command " + strings.Join(targetCommand, " "))
 	cmd := exec.Command(targetCommand[0], targetCommand[1:]...)
 
 	stdin, err := cmd.StdinPipe()
@@ -160,7 +167,14 @@ func (c *client) forwardToCommand(stream quic.Stream, targetCommand []string) {
 	go func() { io.Copy(stdin, stream) }()
 }
 
-func (c *client) forwardToTcp(stream quic.Stream, targetForwardAddr string) {
+func (c *client) forwardToTcp(stream quic.Stream, forward *forward) {
+	forward.Lock()
+	peerUdpAddr := forward.peerUdpAddr
+	targetForwardAddr := forward.targetForwardAddr
+	forward.Unlock()
+
+	log.Println("Forwarding stream from " + peerUdpAddr.String() + " to TCP address " + targetForwardAddr)
+
 	forwardStream, err := net.Dial("tcp", targetForwardAddr)
 	if err != nil {
 		log.Printf("Cannot open connection to %s: %s\n", targetForwardAddr, err.Error())
@@ -170,4 +184,39 @@ func (c *client) forwardToTcp(stream quic.Stream, targetForwardAddr string) {
 	go func() { io.Copy(stream, forwardStream) }()
 	go func() { io.Copy(forwardStream, stream) }()
 }
+
+func (c *client) forwardToTap(stream quic.Stream, forward *forward) {
+	forward.Lock()
+	peerUdpAddr := forward.peerUdpAddr
+	sourceNetwork := forward.sourceNetwork
+	forward.Unlock()
+
+	log.Println("Forwarding stream from " + peerUdpAddr.String() + " to tap interface for network " + sourceNetwork)
+
+	config := water.Config{
+		DeviceType: water.TAP,
+	}
+
+	config.Name = "tap" + forward.id + "1"
+
+	ifce, err := water.New(config)
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+
+	if out, err := exec.Command("ip", "link", "set", config.Name, "up").CombinedOutput(); err != nil {
+		log.Printf("Failed to up link %s: %s\n%s\n", config.Name, err.Error(), out)
+		return
+	}
+
+	if out, err := exec.Command("ip", "route", "add", sourceNetwork, "dev", config.Name).CombinedOutput(); err != nil {
+		log.Printf("Failed to add route %s: %s\n%s\n", sourceNetwork, err.Error(), out)
+		return
+	}
+
+	go func() { io.Copy(stream, ifce) }()
+	go func() { io.Copy(ifce, stream) }()
+}
+
 

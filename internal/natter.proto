@@ -14,12 +14,15 @@ message CheckinResponse {
 // 0x03
 message ForwardRequest {
     string Id = 1;
-    string Source = 2;
-    string SourceAddr = 3;
-    string Target = 4;
-    string TargetAddr = 5;
-    string TargetForwardAddr = 6;
-    repeated string TargetCommand = 7;
+    string Mode = 2;
+    string Source = 3;
+    string SourceAddr = 4;
+    string SourceNetwork = 5;
+    string Target = 6;
+    string TargetAddr = 7;
+    string TargetNetwork = 8;
+    string TargetForwardAddr = 9;
+    repeated string TargetCommand = 10;
 }
 
 // 0x04

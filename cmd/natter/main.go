@@ -84,37 +84,59 @@ func runClient(config *natter.Config, listenFlag *bool) {
 		spec := strings.Split(s, ":")
 
 		var (
-			sourceAddr string
-			target string
+			ftype             string
+			sourceAddr        string
+			sourceNetwork     string
+			target            string
 			targetForwardAddr string
+			targetNetwork     string
 		)
 
-		if len(spec) == 3 {
-			sourceAddr = spec[0]
-			target = spec[1]
+		if len(spec) < 1 {
+			fail(errors.New("invalid spec: " + s))
+		}
 
-			if spec[2] == "" {
-				targetForwardAddr = ""
+		ftype = spec[0]
 
-				if len(targetCommand) == 0 {
-					fail(errors.New("Invalid spec " + s + ", no command specified"))
+		if ftype == "l2" {
+			if len(spec) == 4 {
+				sourceNetwork = spec[1]
+				target = spec[2]
+				targetNetwork = spec[3]
+
+				_, err := client.ForwardL2(sourceNetwork, target, targetNetwork)
+				if err != nil {
+					fail(err)
 				}
-			} else {
-				targetForwardAddr = ":" + spec[2]
 			}
-		} else if len(spec) == 4 {
-			sourceAddr = spec[0]
-			target = spec[1]
-			targetForwardAddr = spec[2] + ":" + spec[3]
-		}
+		} else {
+			if len(spec) == 4 {
+				sourceAddr = spec[0]
+				target = spec[1]
 
-		if sourceAddr != "" {
-			sourceAddr = ":" + sourceAddr
-		}
+				if spec[2] == "" {
+					targetForwardAddr = ""
 
-		_, err := client.Forward(sourceAddr, target, targetForwardAddr, targetCommand)
-		if err != nil {
-			fail(err)
+					if len(targetCommand) == 0 {
+						fail(errors.New("Invalid spec " + s + ", no command specified"))
+					}
+				} else {
+					targetForwardAddr = ":" + spec[2]
+				}
+			} else if len(spec) == 5 {
+				sourceAddr = spec[0]
+				target = spec[1]
+				targetForwardAddr = spec[2] + ":" + spec[3]
+			}
+
+			if sourceAddr != "" {
+				sourceAddr = ":" + sourceAddr
+			}
+
+			_, err := client.ForwardTCP(sourceAddr, target, targetForwardAddr, targetCommand)
+			if err != nil {
+				fail(err)
+			}
 		}
 	}
 

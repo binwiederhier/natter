@@ -21,10 +21,13 @@ type client struct {
 type forward struct {
 	peerUdpAddr       *net.UDPAddr
 	id                string
+	mode              string
 	source            string
 	sourceAddr        string
+	sourceNetwork     string
 	target            string
 	targetForwardAddr string
+	targetNetwork     string
 	targetCommand     []string
 
 	sync.RWMutex
@@ -42,6 +45,11 @@ const (
 	connectionIdLength         = 8
 	connectionIdleTimeout      = 5 * time.Second
 	connectionHandshakeTimeout = 5 * time.Second
+)
+
+const (
+	forwardTypeTCP = "TCP"
+	forwardTypeL2 = "L2"
 )
 
 // NewClient creates a new client struct. It checks the configuration
