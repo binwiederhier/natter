@@ -26,7 +26,7 @@ func natter_client_forward(clientUser *C.char, brokerAddr *C.char,
 		BrokerAddr: C.GoString(brokerAddr),
 	})
 
-	if _, err := client.ForwardTCP(C.GoString(localAddr), C.GoString(target), C.GoString(targetForwardAddr),
+	if _, err := client.Forward(C.GoString(localAddr), C.GoString(target), C.GoString(targetForwardAddr),
 		toGoStrings(targetCommandCount, targetCommand)); err != nil {
 		return 1
 	}

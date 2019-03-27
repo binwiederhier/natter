@@ -7,6 +7,7 @@ import (
 	"heckel.io/natter"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -80,67 +81,140 @@ func runClient(config *natter.Config, listenFlag *bool) {
 	}
 
 	// Process forward specs
-	for _, s := range specs {
-		spec := strings.Split(s, ":")
+	for _, spec := range specs {
+		parts := strings.Split(spec, ":")
 
 		var (
-			ftype             string
-			sourceAddr        string
-			sourceNetwork     string
-			target            string
-			targetForwardAddr string
-			targetNetwork     string
+			mode              string
 		)
 
-		if len(spec) < 1 {
-			fail(errors.New("invalid spec: " + s))
+		if len(parts) < 1 {
+			fail(errors.New("invalid spec: " + spec))
 		}
 
-		ftype = spec[0]
+		mode = parts[0]
 
-		if ftype == "l2" {
-			if len(spec) == 4 {
-				sourceNetwork = spec[1]
-				target = spec[2]
-				targetNetwork = spec[3]
-
-				_, err := client.ForwardL2(sourceNetwork, target, targetNetwork)
-				if err != nil {
-					fail(err)
-				}
-			}
-		} else {
-			if len(spec) == 4 {
-				sourceAddr = spec[0]
-				target = spec[1]
-
-				if spec[2] == "" {
-					targetForwardAddr = ""
-
-					if len(targetCommand) == 0 {
-						fail(errors.New("Invalid spec " + s + ", no command specified"))
-					}
-				} else {
-					targetForwardAddr = ":" + spec[2]
-				}
-			} else if len(spec) == 5 {
-				sourceAddr = spec[0]
-				target = spec[1]
-				targetForwardAddr = spec[2] + ":" + spec[3]
-			}
-
-			if sourceAddr != "" {
-				sourceAddr = ":" + sourceAddr
-			}
-
-			_, err := client.ForwardTCP(sourceAddr, target, targetForwardAddr, targetCommand)
-			if err != nil {
-				fail(err)
-			}
+		if mode == "eth" {
+			startEth(client, spec)
+		} else if mode == "tcp" {
+			startTcp(client, spec, targetCommand)
 		}
 	}
 
 	select { }
+}
+
+func startTcp(client natter.Client, spec string, targetCommand []string) {
+	parts := strings.Split(spec, ":")
+
+	var (
+		sourceAddr        string
+		target            string
+		targetForwardAddr string
+	)
+
+	if len(parts) == 5 {
+		sourceAddr = parts[1]
+		target = parts[2]
+
+		if parts[3] == "" {
+			targetForwardAddr = ""
+
+			if len(targetCommand) == 0 {
+				fail(errors.New("Invalid spec " + spec + ", no command specified"))
+			}
+		} else {
+			targetForwardAddr = ":" + parts[3]
+		}
+	} else if len(parts) == 6 {
+		sourceAddr = parts[1]
+		target = parts[2]
+		targetForwardAddr = parts[3] + ":" + parts[4]
+	} else {
+		fail(errors.New("Invalid spec " + spec + "."))
+	}
+
+	if sourceAddr != "" {
+		sourceAddr = ":" + sourceAddr
+	}
+
+	_, err := client.Forward(sourceAddr, target, targetForwardAddr, targetCommand)
+	if err != nil {
+		fail(err)
+	}
+}
+
+func startEth(client natter.Client, spec string) {
+	specRegex := regexp.MustCompile(`eth:(.+)`)
+	matches := specRegex.FindStringSubmatch(spec)
+
+	if len(matches) != 2 {
+		fail(errors.New("Invalid spec " + spec + "."))
+	}
+
+	optionsLine := matches[1]
+	options := strings.Split(optionsLine, ",")
+
+	var localBridge string
+	var localRoutes = make([]string, 0)
+	var localDhcp bool
+	var target string
+	var targetBridge string
+	var targetRoutes = make([]string, 0)
+
+	if len(options) < 1 {
+		fail(errors.New("Invalid spec " + spec + "."))
+	}
+
+	if len(options) == 1 {
+		options = append(options, "warrior")
+	}
+
+	target = options[0]
+
+	// Set defaults
+	localDhcp = true
+
+	// Parse options
+	optionRegex := regexp.MustCompile(`([^=]+)=(.+)`)
+
+	for _, option := range options {
+		if option == "warrior" {
+			localDhcp = true
+			localRoutes = append(localRoutes, "auto")
+			localBridge = ""
+			targetBridge = "auto"
+			targetRoutes = make([]string, 0)
+		} else if option == "sites" {
+			localDhcp = false
+			localRoutes = make([]string, 0)
+			localBridge = "auto"
+			targetBridge = "auto"
+			targetRoutes = make([]string, 0)
+		} else if option == "dhcp" || option == "dhcp=yes" {
+			localDhcp = true
+		} else if option == "nodhcp" || option == "dhcp=no" {
+			localDhcp = false
+		} else if matches := optionRegex.FindStringSubmatch(option); len(matches) == 3 {
+			key := matches[1]
+			value := matches[2]
+
+			if key == "lrt" || key == "lroutes" {
+				localRoutes = strings.Split(value, "+")
+			} else if key == "rrt" || key == "rroutes" {
+				targetRoutes = strings.Split(value, "+")
+			} else if key == "lbr" || key == "localbridge" || key == "lbridge" {
+				localBridge = value
+			} else if key == "rbr" || key == "remotebridge" || key == "rbridge" {
+				targetBridge = value
+			}
+		}
+	}
+
+	_, err := client.Bridge(localBridge, localRoutes, localDhcp, target, targetBridge, targetRoutes)
+	if err != nil {
+		fail(err)
+	}
 }
 
 func runBroker(config *natter.Config) {

@@ -24,10 +24,13 @@ type forward struct {
 	mode              string
 	source            string
 	sourceAddr        string
-	sourceNetwork     string
+	sourceBridge      string
+	sourceDhcp        bool
+	sourceRoutes      []string
 	target            string
+	targetBridge      string
 	targetForwardAddr string
-	targetNetwork     string
+	targetRoutes      []string
 	targetCommand     []string
 
 	sync.RWMutex
@@ -48,8 +51,8 @@ const (
 )
 
 const (
-	forwardTypeTCP = "TCP"
-	forwardTypeL2 = "L2"
+	forwardModeTcp    = "TCP"
+	forwardModeBridge = "ETH"
 )
 
 // NewClient creates a new client struct. It checks the configuration

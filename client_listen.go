@@ -4,11 +4,13 @@ import (
 	"errors"
 	"github.com/lucas-clemente/quic-go"
 	"github.com/songgao/water"
+	"github.com/vishvananda/netlink"
 	"heckel.io/natter/internal"
 	"io"
 	"log"
 	"net"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -48,9 +50,12 @@ func (c *client) handleForwardRequest(request *internal.ForwardRequest) {
 		mode:              request.Mode,
 		source:            request.Source,
 		sourceAddr:        request.SourceAddr,
-		sourceNetwork:     request.SourceNetwork,
+		sourceDhcp:        request.SourceDhcp,
+		sourceRoutes:      request.SourceRoutes,
+		sourceBridge:      request.SourceBridge,
 		target:            request.Target,
-		targetNetwork:     request.TargetNetwork,
+		targetRoutes:      request.TargetRoutes,
+		targetBridge:      request.TargetBridge,
 		targetForwardAddr: request.TargetForwardAddr,
 		targetCommand:     request.TargetCommand,
 		peerUdpAddr:       peerUdpAddr,
@@ -61,13 +66,56 @@ func (c *client) handleForwardRequest(request *internal.ForwardRequest) {
 
 	c.forwards[request.Id] = forward
 
+	var sourceRoutesDiscovered = make([]string, 0)
+
+	if request.Mode == forwardModeBridge {
+		if len(request.SourceRoutes) == 1 && request.SourceRoutes[0] == "auto" {
+			var out []byte
+
+			if out, err = exec.Command("ip", "route", "get", "1").Output(); err != nil {
+				log.Printf("Failed to get default route: %s\n", err.Error())
+				return
+			}
+
+			line := string(out)
+			defaultDeviceRegex := regexp.MustCompile(`\bdev\s+(\S+)`)
+			matches := defaultDeviceRegex.FindStringSubmatch(line)
+
+			if len(matches) != 2 {
+				log.Printf("Failed to get default route, cannot match line: %s\n%s\n", err.Error(), line)
+				return
+			}
+
+			defaultDevice := matches[1]
+
+			if out, err = exec.Command("ip", "-o", "-f", "inet", "addr", "show", defaultDevice).CombinedOutput(); err != nil {
+				log.Printf("Failed to get default route: %s\n%s\n", err.Error(), out)
+				return
+			}
+
+			line = strings.TrimSpace(string(out))
+			defaultNetworkRegex := regexp.MustCompile(`\binet\s+(\S+)`)
+			matches = defaultNetworkRegex.FindStringSubmatch(line)
+
+			if len(matches) != 2 {
+				log.Printf("Failed to get default route, cannot match line: %s\n%s\n", err.Error(), line)
+				return
+			}
+
+			defaultNetwork := matches[1]
+
+			sourceRoutesDiscovered = append(sourceRoutesDiscovered, defaultNetwork)
+		}
+	}
+
 	err = c.conn.Send(messageTypeForwardResponse, &internal.ForwardResponse{
-		Id:         request.Id,
-		Success:    true,
-		Source:     request.Source,
-		SourceAddr: request.SourceAddr,
-		Target:     request.Target,
-		TargetAddr: request.TargetAddr,
+		Id:                     request.Id,
+		Success:                true,
+		Source:                 request.Source,
+		SourceAddr:             request.SourceAddr,
+		SourceRoutesDiscovered: sourceRoutesDiscovered,
+		Target:                 request.Target,
+		TargetAddr:             request.TargetAddr,
 	})
 	if err != nil {
 		log.Println("Cannot send forward response: " + err.Error())
@@ -125,7 +173,7 @@ func (c *client) handlePeerStream(session quic.Session, stream quic.Stream, forw
 	targetCommand := forward.targetCommand
 	forward.Unlock()
 
-	if ftype == forwardTypeL2 {
+	if ftype == forwardModeBridge {
 		c.forwardToTap(stream, forward)
 	} else {
 		if targetCommand != nil && len(targetCommand) > 0 {
@@ -188,16 +236,15 @@ func (c *client) forwardToTcp(stream quic.Stream, forward *forward) {
 func (c *client) forwardToTap(stream quic.Stream, forward *forward) {
 	forward.Lock()
 	peerUdpAddr := forward.peerUdpAddr
-	sourceNetwork := forward.sourceNetwork
+	targetRoutes := forward.targetRoutes
+	targetBridge := forward.targetBridge
 	forward.Unlock()
 
-	log.Println("Forwarding stream from " + peerUdpAddr.String() + " to tap interface for network " + sourceNetwork)
+	log.Println("Forwarding stream from " + peerUdpAddr.String() + " to tap interface")
 
-	config := water.Config{
-		DeviceType: water.TAP,
-	}
-
-	config.Name = "tap" + forward.id + "1"
+	tapName := "tap" + forward.id + "1"
+	config := water.Config{DeviceType: water.TAP}
+	config.Name = tapName
 
 	ifce, err := water.New(config)
 	if err != nil {
@@ -205,14 +252,49 @@ func (c *client) forwardToTap(stream quic.Stream, forward *forward) {
 		return
 	}
 
-	if out, err := exec.Command("ip", "link", "set", config.Name, "up").CombinedOutput(); err != nil {
-		log.Printf("Failed to up link %s: %s\n%s\n", config.Name, err.Error(), out)
+	tapLink, err := netlink.LinkByName(tapName)
+	if err != nil {
+		log.Printf("Failed get link %s: %s\n", tapName, err.Error())
 		return
 	}
 
-	if out, err := exec.Command("ip", "route", "add", sourceNetwork, "dev", config.Name).CombinedOutput(); err != nil {
-		log.Printf("Failed to add route %s: %s\n%s\n", sourceNetwork, err.Error(), out)
+	if targetBridge != "" {
+		bridgeLink, err := netlink.LinkByName(targetBridge)
+		if err != nil {
+			log.Printf("Failed get link for bridge %s: %s\n", targetBridge, err.Error())
+			return
+		}
+
+		err = netlink.LinkSetMasterByIndex(tapLink, bridgeLink.Attrs().Index)
+		if err != nil {
+			log.Printf("Failed to add tap to target bridge %s: %s\n", targetBridge, err.Error())
+			return
+		}
+	}
+
+	if err := netlink.LinkSetUp(tapLink); err != nil {
+		log.Printf("Failed to up link %s: %s\n", tapName, err.Error())
 		return
+	}
+
+	// TODO duplicate code
+	for _, dstRoute := range targetRoutes {
+		log.Println("Adding route " + dstRoute)
+
+		_, dstNet, err := net.ParseCIDR(dstRoute)
+		if err != nil {
+			log.Printf("Cannot add route %s: %s\n", dstRoute, err.Error())
+			return
+		}
+
+		err = netlink.RouteAdd(&netlink.Route{
+			LinkIndex: tapLink.Attrs().Index,
+			Dst:       dstNet,
+		})
+		if err != nil {
+			log.Printf("Cannot add route %s: %s\n", dstRoute, err.Error())
+			return
+		}
 	}
 
 	go func() { io.Copy(stream, ifce) }()

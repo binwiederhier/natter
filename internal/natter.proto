@@ -17,12 +17,15 @@ message ForwardRequest {
     string Mode = 2;
     string Source = 3;
     string SourceAddr = 4;
-    string SourceNetwork = 5;
-    string Target = 6;
-    string TargetAddr = 7;
-    string TargetNetwork = 8;
-    string TargetForwardAddr = 9;
-    repeated string TargetCommand = 10;
+    string SourceBridge = 5;
+    bool SourceDhcp = 6;
+    repeated string SourceRoutes = 7;
+    string Target = 8;
+    string TargetAddr = 9;
+    string TargetBridge = 10;
+    repeated string TargetRoutes = 11;
+    string TargetForwardAddr = 12;
+    repeated string TargetCommand = 13;
 }
 
 // 0x04
@@ -31,6 +34,7 @@ message ForwardResponse {
     bool Success = 2;
     string Source = 3;
     string SourceAddr = 4;
-    string Target = 5;
-    string TargetAddr = 6;
+    repeated string SourceRoutesDiscovered = 5;
+    string Target = 6;
+    string TargetAddr = 7;
 }

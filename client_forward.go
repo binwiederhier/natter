@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/lucas-clemente/quic-go"
 	"github.com/songgao/water"
+	"github.com/vishvananda/netlink"
 	"heckel.io/natter/internal"
 	"io"
 	"log"
@@ -15,16 +16,22 @@ import (
 	"time"
 )
 
-func (c *client) ForwardL2(localNetwork string, target string, targetNetwork string) (Forward, error) {
-	return c.forward(forwardTypeL2, "", localNetwork, target, targetNetwork, "", []string{})
+func (c *client) Bridge(localBridge string, localRoutes []string, localDhcp bool,
+	target string, targetBridge string, targetRoutes []string) (Forward, error) {
+
+	return c.forward(forwardModeBridge, "", localBridge, localDhcp, localRoutes,
+		target, targetBridge, targetRoutes, "", []string{})
 }
 
-func (c *client) ForwardTCP(localAddr string, target string, targetForwardAddr string, targetCommand []string) (Forward, error) {
-	return c.forward(forwardTypeTCP, localAddr, "", target, "", targetForwardAddr, targetCommand)
+func (c *client) Forward(localAddr string, target string,
+	targetForwardAddr string, targetCommand []string) (Forward, error) {
+
+	return c.forward(forwardModeTcp, localAddr, "", false, []string{},
+		target, "", []string{}, targetForwardAddr, targetCommand)
 }
 
-func (c *client) forward(ftype string, localAddr string, localNetwork string,
-	target string, targetNetwork string, targetForwardAddr string, targetCommand []string) (Forward, error) {
+func (c *client) forward(mode string, localAddr string, localBridge string, localDhcp bool, localRoutes []string,
+	target string, targetBridge string, targetRoutes []string, targetForwardAddr string, targetCommand []string) (Forward, error) {
 
 	log.Printf("Adding forward from local address %s to %s %s\n", localAddr, target, targetForwardAddr)
 
@@ -40,12 +47,15 @@ func (c *client) forward(ftype string, localAddr string, localNetwork string,
 	// Create forward entry
 	forward := &forward{
 		id:                c.generateConnId(),
-		mode:              ftype,
+		mode:              mode,
 		source:            c.config.ClientId,
 		sourceAddr:        localAddr,
-		sourceNetwork:     localNetwork,
+		sourceDhcp:        localDhcp,
+		sourceBridge:      localBridge,
+		sourceRoutes:      localRoutes,
 		target:            target,
-		targetNetwork:     targetNetwork,
+		targetBridge:      targetBridge,
+		targetRoutes:      targetRoutes,
 		targetForwardAddr: targetForwardAddr,
 		targetCommand:     targetCommand,
 	}
@@ -61,10 +71,13 @@ func (c *client) forward(ftype string, localAddr string, localNetwork string,
 		Id:                forward.id,
 		Mode:              forward.mode,
 		Source:            forward.source,
+		SourceBridge:      forward.sourceBridge,
+		SourceDhcp:        forward.sourceDhcp,
 		SourceAddr:        forward.sourceAddr,
-		SourceNetwork:     forward.sourceNetwork,
+		SourceRoutes:      forward.sourceRoutes,
 		Target:            forward.target,
-		TargetNetwork:     forward.targetNetwork,
+		TargetBridge:      forward.targetBridge,
+		TargetRoutes:      forward.targetRoutes,
 		TargetForwardAddr: forward.targetForwardAddr,
 		TargetCommand:     forward.targetCommand,
 	})
@@ -104,31 +117,84 @@ func (c *client) forwardFromTcp(forward *forward) error {
 func (c *client) forwardFromTap(forward *forward) {
 	go func() {
 		forward.Lock()
-		targetNetwork := forward.targetNetwork
+		sourceRoutes := forward.sourceRoutes
+		sourceDhcp := forward.sourceDhcp
 		forward.Unlock()
 
-		config := water.Config{
-			DeviceType: water.TAP,
-		}
+		tapName := "tap" + forward.id + "0"
 
-		config.Name = "tap" + forward.id + "0"
+		config := water.Config{DeviceType: water.TAP}
+		config.Name = tapName
 
-		log.Printf("Listening on tap%s\n", config.Name)
+		log.Printf("Listening on tap%s\n", tapName)
 
 		ifce, err := water.New(config)
 		if err != nil {
-			log.Printf("Failed to create tap device %s: %s\n", config.Name, err.Error())
+			log.Printf("Failed to create tap device %s: %s\n", tapName, err.Error())
 			return
 		}
 
-		if out, err := exec.Command("ip", "link", "set", config.Name, "up").CombinedOutput(); err != nil {
-			log.Printf("Failed to up link %s: %s\n%s\n", config.Name, err.Error(), out)
+		tapLink, err := netlink.LinkByName(tapName)
+		if err != nil {
+			log.Printf("Failed get link %s: %s\n", tapName, err.Error())
 			return
 		}
 
-		if out, err := exec.Command("ip", "route", "add", targetNetwork, "dev", config.Name).CombinedOutput(); err != nil {
-			log.Printf("Failed to add route %s: %s\n%s\n", targetNetwork, err.Error(), out)
+		if err := netlink.LinkSetUp(tapLink); err != nil {
+			log.Printf("Failed to up link %s: %s\n", tapName, err.Error())
 			return
+		}
+
+		for _, dstRoute := range sourceRoutes {
+			log.Println("Adding route " + dstRoute)
+
+			_, dstNet, err := net.ParseCIDR(dstRoute)
+			if err != nil {
+				log.Printf("Cannot add route %s: %s\n", dstRoute, err.Error())
+				return
+			}
+
+			err = netlink.RouteAdd(&netlink.Route{
+				LinkIndex: tapLink.Attrs().Index,
+				Dst:       dstNet,
+			})
+			if err != nil {
+				log.Printf("Cannot add route %s: %s\n", dstRoute, err.Error())
+				return
+			}
+		}
+
+		if sourceDhcp {
+			go func() { // TODO At this point the tap is not connected, so this needs to run asynchronoiusly or later
+				log.Printf("Running DHCP on tap interface ...")
+
+				cmd := exec.Command("dhclient", "-v", tapName)
+				err := cmd.Run()
+				if err != nil {
+					log.Printf("Cannot get DHCP address for tap interface: %s\n", err.Error())
+					return
+				}
+
+				// Remove default route (dhclient adds one ...)
+				routes, err := netlink.RouteList(tapLink, netlink.FAMILY_V4)
+				if err != nil {
+					log.Printf("Cannot get list of routes: %s\n", err.Error())
+					return
+				}
+
+				for _, route := range routes {
+					//log.Printf("checking route %#v", route)
+					defaultRoute := route.Dst == nil && route.Src == nil
+					if defaultRoute {
+						log.Printf("Removing default route to tap (dhclient added this ...)")
+						err := netlink.RouteDel(&route)
+						if err != nil {
+							log.Printf("Cannot remove default route %#v: %s\n", route, err.Error())
+							return
+						}
+					}
+				}
+			}()
 		}
 
 		go c.openPeerStream(forward, ifce)
@@ -215,9 +281,12 @@ func (c *client) handleForwardResponse(response *internal.ForwardResponse) {
 
 	forward.Lock()
 	forward.peerUdpAddr, err = net.ResolveUDPAddr("udp4", response.TargetAddr)
+	if forward.mode == forwardModeBridge && len(response.SourceRoutesDiscovered) > 0 {
+		forward.sourceRoutes = response.SourceRoutesDiscovered
+	}
 	forward.Unlock()
 
-	if forward.mode == forwardTypeL2 {
+	if forward.mode == forwardModeBridge {
 		c.forwardFromTap(forward)
 	} else {
 		// Listen to local TCP address
