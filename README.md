@@ -75,7 +75,7 @@ alice> cat /dev/zero | natter :bob: sh -c 'cat > zeros'
 
 ### Using the Go library
 
-Here's the same example on localhost:
+Here's the same example on two clients and a broker on localhost. To run it, first ensure that you are using Go modules by initializing a module via `go mod init main`. Then create `nattertest.go`:
 
 ```go
 package main
@@ -97,6 +97,22 @@ func main() {
 	select {}
 }
 ``` 
+
+And finally run it via `go run nattertest.go`. This will get all the dependencies first and then run program:
+
+```
+$ go run nattertest.go
+go: finding heckel.io/natter v0.0.6
+go: downloading heckel.io/natter v0.0.6
+go: extracting heckel.io/natter v0.0.6
+....
+2019/09/22 10:09:07 Waiting for connections
+2019/09/22 10:09:07 Connecting to broker at 127.0.0.1:10000
+2019/09/22 10:09:07 -> [CheckinRequest] Source:"bob" 
+2019/09/22 10:09:07 <- [CheckinRequest] Source:"bob" 
+2019/09/22 10:09:07 Client bob with address 127.0.0.1:17473 connected
+...
+```
 
 ## Contributing
 
