@@ -83,16 +83,11 @@ func runClient(config *natter.Config, listenFlag *bool) {
 	// Process forward specs
 	for _, spec := range specs {
 		parts := strings.Split(spec, ":")
-
-		var (
-			mode              string
-		)
-
 		if len(parts) < 1 {
 			fail(errors.New("invalid spec: " + spec))
 		}
 
-		mode = parts[0]
+		mode := parts[0]
 
 		if mode == "eth" {
 			startEth(client, spec)
@@ -113,7 +108,7 @@ func startTcp(client natter.Client, spec string, targetCommand []string) {
 		targetForwardAddr string
 	)
 
-	if len(parts) == 5 {
+	if len(parts) == 4 {
 		sourceAddr = parts[1]
 		target = parts[2]
 
@@ -126,7 +121,7 @@ func startTcp(client natter.Client, spec string, targetCommand []string) {
 		} else {
 			targetForwardAddr = ":" + parts[3]
 		}
-	} else if len(parts) == 6 {
+	} else if len(parts) == 5 {
 		sourceAddr = parts[1]
 		target = parts[2]
 		targetForwardAddr = parts[3] + ":" + parts[4]

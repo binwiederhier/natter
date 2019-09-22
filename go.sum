@@ -14,6 +14,8 @@ github.com/lucas-clemente/quic-go v0.10.1 h1:ipcMmYP9RT+b1YytOKGUY1qndxPGOczVEQk
 github.com/lucas-clemente/quic-go v0.10.1/go.mod h1:wuD+2XqEx8G9jtwx5ou2BEYBsE+whgQmlj0Vz/77PrY=
 github.com/lucas-clemente/quic-go-certificates v0.0.0-20160823095156-d2f86524cced h1:zqEC1GJZFbGZA0tRyNZqRjep92K5fujFtFsu5ZW7Aug=
 github.com/lucas-clemente/quic-go-certificates v0.0.0-20160823095156-d2f86524cced/go.mod h1:NCcRLrOTZbzhZvixZLlERbJtDtYsmMw8Jc4vS8Z0g58=
+github.com/pkg/taptun v0.0.0-20160424131934-bbbd335672ab h1:dAXDRtXYxj4sTR5WeRuTFJGH18QMT6AUpUgRwedI6es=
+github.com/pkg/taptun v0.0.0-20160424131934-bbbd335672ab/go.mod h1:N5a/Ll2ZNk5wjiLNW9LIiNtO9RNYcaYmcXSYKMYrlDg=
 github.com/songgao/packets v0.0.0-20160404182456-549a10cd4091 h1:1zN6ImoqhSJhN8hGXFaJlSC8msLmIbX8bFqOfWLKw0w=
 github.com/songgao/packets v0.0.0-20160404182456-549a10cd4091/go.mod h1:N20Z5Y8oye9a7HmytmZ+tr8Q2vlP0tAHP13kTHzwvQY=
 github.com/songgao/water v0.0.0-20190112225332-f6122f5b2fbd h1:vpFVSP90n7zcgDvZUJ83nrfzU5OX5NJx6fpnqe7+EwA=

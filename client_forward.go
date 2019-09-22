@@ -88,6 +88,56 @@ func (c *client) forward(mode string, localAddr string, localBridge string, loca
 	return forward, nil
 }
 
+
+func (c *client) handleForwardResponse(response *internal.ForwardResponse) {
+	c.forwardsMutex.Lock()
+	defer c.forwardsMutex.Unlock()
+
+	forward, ok := c.forwards[response.Id]
+
+	if !ok {
+		log.Println("Forward response with invalid ID received. Ignoring.")
+		return
+	}
+
+	if !response.Success {
+		log.Println("Failed forward response")
+		return
+	}
+
+	var err error
+	log.Print("Peer address: ", response.TargetAddr)
+
+	forward.Lock()
+	forward.peerUdpAddr, err = net.ResolveUDPAddr("udp4", response.TargetAddr)
+	if forward.mode == forwardModeBridge && len(response.SourceRoutesDiscovered) > 0 {
+		forward.sourceRoutes = response.SourceRoutesDiscovered
+	}
+	forward.Unlock()
+
+	if forward.mode == forwardModeBridge {
+		c.forwardFromTap(forward)
+	} else {
+		// Listen to local TCP address
+		if forward.sourceAddr == "" {
+			c.forwardFromStdin(forward)
+		} else {
+			if err := c.forwardFromTcp(forward); err != nil {
+				log.Println("Failed to forward from TCP")
+				return
+			}
+		}
+	}
+
+	if err != nil {
+		// TODO close forward
+		log.Println("Failed to resolve peer UDP address: " + err.Error())
+		return
+	}
+
+	go c.punch(forward.peerUdpAddr)
+}
+
 func (c *client) forwardFromStdin(forward *forward) {
 	log.Println("Reading from STDIN")
 
@@ -258,53 +308,4 @@ func (c *client) openPeerStream(forward *forward, localStream io.ReadWriter) {
 
 	go func() { io.Copy(peerStream, localStream) }()
 	go func() { io.Copy(localStream, peerStream) }()
-}
-
-func (c *client) handleForwardResponse(response *internal.ForwardResponse) {
-	c.forwardsMutex.Lock()
-	defer c.forwardsMutex.Unlock()
-
-	forward, ok := c.forwards[response.Id]
-
-	if !ok {
-		log.Println("Forward response with invalid ID received. Ignoring.")
-		return
-	}
-
-	if !response.Success {
-		log.Println("Failed forward response")
-		return
-	}
-
-	var err error
-	log.Print("Peer address: ", response.TargetAddr)
-
-	forward.Lock()
-	forward.peerUdpAddr, err = net.ResolveUDPAddr("udp4", response.TargetAddr)
-	if forward.mode == forwardModeBridge && len(response.SourceRoutesDiscovered) > 0 {
-		forward.sourceRoutes = response.SourceRoutesDiscovered
-	}
-	forward.Unlock()
-
-	if forward.mode == forwardModeBridge {
-		c.forwardFromTap(forward)
-	} else {
-		// Listen to local TCP address
-		if forward.sourceAddr == "" {
-			c.forwardFromStdin(forward)
-		} else {
-			if err := c.forwardFromTcp(forward); err != nil {
-				log.Println("Failed to forward from TCP")
-				return
-			}
-		}
-	}
-
-	if err != nil {
-		// TODO close forward
-		log.Println("Failed to resolve peer UDP address: " + err.Error())
-		return
-	}
-
-	go c.punch(forward.peerUdpAddr)
 }
