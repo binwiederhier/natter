@@ -3,7 +3,7 @@ module heckel.io/natter
 go 1.12
 
 require (
-	github.com/bifurcation/mint v0.0.0-20181204000000-824af6541065 // manual
+	github.com/bifurcation/mint v0.0.0-20181105073638-824af6541065 // manual
 	github.com/cheekybits/genny v1.0.0 // indirect
 	github.com/golang/protobuf v1.3.0
 	github.com/hashicorp/golang-lru v0.5.1 // indirect
