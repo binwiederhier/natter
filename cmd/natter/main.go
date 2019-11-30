@@ -17,12 +17,12 @@ const (
 func main() {
 	configFlag := flag.String("config", "", "Config file, defaults to /etc/natter/natter.conf")
 	brokerFlag := flag.String("broker", "", "Broker address and port")
-	clientFlag := flag.String("client", "", "Client identifier (client only)")
+	clientIdFlag := flag.String("id", "", "Client identifier (client only)")
 	listenFlag := flag.Bool("listen", false, "Listen for incoming forwards (client only)")
 
 	flag.Parse()
 
-	config := loadConfig(configFlag, clientFlag, brokerFlag)
+	config := loadConfig(configFlag, clientIdFlag, brokerFlag)
 
 	if config.ClientId != "" {
 		runClient(config, listenFlag)
@@ -144,7 +144,7 @@ func runBroker(config *natter.Config) {
 	}
 }
 
-func loadConfig(configFlag *string, clientFlag *string, brokerFlag *string) *natter.Config {
+func loadConfig(configFlag *string, clientIdFlag *string, brokerFlag *string) *natter.Config {
 	var config *natter.Config
 	var err error
 
@@ -164,8 +164,8 @@ func loadConfig(configFlag *string, clientFlag *string, brokerFlag *string) *nat
 		config = &natter.Config{}
 	}
 
-	if *clientFlag != "" {
-		config.ClientId = *clientFlag
+	if *clientIdFlag != "" {
+		config.ClientId = *clientIdFlag
 	}
 
 	if *brokerFlag != "" {
@@ -180,7 +180,7 @@ func syntax() {
 	fmt.Println("  natter -broker :PORT")
 	fmt.Println("    Start the broker / rendevous server on PORT for new client connections")
 	fmt.Println()
-	fmt.Println("  natter [-config CONFIG] [-name CLIENTNAME] [-broker BROKER] [-listen] [FORWARDSPEC ...] [COMMAND]")
+	fmt.Println("  natter [-config CONFIG] [-id CLIENTID] [-broker BROKER] [-listen] [FORWARDSPEC ...] [COMMAND]")
 	fmt.Println("    Start client side daemon to listen for incoming forwards")
 	fmt.Println()
 	fmt.Println("  Forward spec:")
@@ -200,7 +200,7 @@ func syntax() {
 	fmt.Println("    Forward local TCP port 8022 to TCP address 10.0.1.1:22 in bob's network,")
 	fmt.Println("    and also listen for incoming forwards")
 	fmt.Println()
-	fmt.Println("  natter -name alice -broker example.com:1337 :bob: sh -c 'cat > file.txt'")
+	fmt.Println("  natter -id alice -broker example.com:1337 :bob: sh -c 'cat > file.txt'")
 	fmt.Println("    Forward local STDIN to remote command")
 	os.Exit(1)
 }

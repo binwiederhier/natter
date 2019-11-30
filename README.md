@@ -50,13 +50,13 @@ broker> natter -broker :10000
 
 Then start client Bob, and listen for incoming connections:
 ```
-bob> natter -name bob -broker 1.2.3.4:10000 -listen
+bob> natter -id bob -broker 1.2.3.4:10000 -listen
 ```
    
 And finally start client Alice, and forward local TCP connections on 8022 to bob's TCP port 22 (SSH). After that, 
 Alice can connect to Bob's SSH server by connecting to localhost:8022:
 ```
-alice> natter -name alice -broker 1.2.3.4:10000 8022:bob:22
+alice> natter -id alice -broker 1.2.3.4:10000 8022:bob:22
 alice> ssh -p 8022 root@localhost
 ```
 
